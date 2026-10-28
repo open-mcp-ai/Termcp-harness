@@ -4,7 +4,7 @@
 >
 > 上游分支信息来自 `git ls-remote --heads` 和公开 commits Atom 源；会随上游变化，不构成永久事实。
 >
-> Harness 当前尚未初始化 Git；本文定义后续采用的策略。
+> 2026-10-28 已初始化 Git（`main`），当前产品开发集中在 `dev`。本文中“空仓库、初期不需要 dev”的描述仅保留为历史判断；当前执行规则见第 3、4 节的状态更新。
 
 ## 1. 上游 Core 分支观察
 
@@ -60,6 +60,8 @@ Desktop `dev` 的最新提交是：
 
 ### 初期不需要长期 `dev`
 
+> 状态更新（2026-10-28）：该建议已被当前项目决定覆盖。`main` 保持发布基线，产品开发统一进入 `dev`；Desktop 第一版完成后，从短期功能分支向 `dev` 提交 PR。未经负责人明确指令，不把 `dev` 合入 `main`。
+
 Harness 目前是单人主导、空仓库、尚未发布。推荐先采用 trunk-based development：
 
 - `main`：始终可构建、可测试、可发布。
@@ -94,17 +96,19 @@ PR 合并后删除短分支。
 
 ```text
 main
-├── feat/runtime-kernel
-├── feat/mcp-host
-├── feat/tool-pipeline
-├── feat/terminal-workspace
-├── feat/module-catalog
-├── feat/installer-recommendations
-├── fix/tool-state
-├── docs/runtime-boundary
-├── chore/bootstrap-runtime
-└── chore/bootstrap-wails
+└── dev
+    ├── feat/runtime-kernel
+    ├── feat/mcp-host
+    ├── feat/tool-pipeline
+    ├── feat/desktop-shell
+    ├── fix/tool-state
+    └── docs/runtime-boundary
 ```
+
+- `main`：发布基线，当前不承载日常开发。
+- `dev`：产品集成分支，Desktop 第一版开发和验证在这里继续。
+- 短期功能分支：PR 目标为 `dev`。
+- 只有负责人明确批准后，才创建 `dev -> main` 的发布 PR。
 
 ### 发布后可选
 
@@ -145,6 +149,6 @@ main
 
 ## 7. 当前结论
 
-**现在只需要 `main` + 短生命周期分支，不需要 `dev` 或 `dev_newui`。**
+**当前采用 `main` + `dev` + 短生命周期功能分支；功能 PR 合入 `dev`，`main` 等待负责人明确发布指令。**
 
-**`dev` 等未来出现 nightly/preview 或多开发者集成需求时再引入；`dev_newui` 不作为 Harness 的开发模型。**
+**`dev_newui` 是 Core 的 Web UI 分支，不作为 Harness 的开发模型；Harness Desktop 使用独立 Wails 工程。**

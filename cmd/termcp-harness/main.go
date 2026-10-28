@@ -15,6 +15,7 @@ import (
 
 	"github.com/open-mcp-ai/termcp-harness/internal/controlapi"
 	"github.com/open-mcp-ai/termcp-harness/internal/daemon"
+	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	runtimepkg "github.com/open-mcp-ai/termcp-harness/internal/runtime"
 )
@@ -84,6 +85,10 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	listenAddress := flags.String("listen", "127.0.0.1:8787", "loopback address for the control API")
+	mcpEndpoint := flags.String("mcp-endpoint", "", "optional loopback MCP Streamable HTTP endpoint")
+	mcpID := flags.String("mcp-id", "termcp-core", "MCP server ID for --mcp-endpoint")
+	mcpName := flags.String("mcp-name", "Termcp Core", "MCP server display name for --mcp-endpoint")
+	mcpEnable := flags.Bool("mcp-enable", true, "enable the configured MCP server after capabilities load")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -91,16 +96,53 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
 
-	rt, err := runtimepkg.New(version)
+	journal := eventlog.New()
+	host := mcpcontrol.NewHost(mcpcontrol.WithHostEventLog(journal))
+	defer host.Close()
+	rt, err := runtimepkg.New(version, runtimepkg.WithEventLog(journal))
 	if err != nil {
 		return err
 	}
-	server, err := daemon.NewServer(*listenAddress, controlapi.NewHandler(rt), rt)
+	server, err := daemon.NewServer(*listenAddress, controlapi.NewHandler(
+		rt,
+		controlapi.WithEventLog(journal),
+		controlapi.WithMCPRegistry(host),
+	), rt)
 	if err != nil {
 		return err
 	}
 
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	if *mcpEndpoint != "" {
+		if _, err := host.Register(mcpcontrol.Spec{
+			ID:       *mcpID,
+			Name:     *mcpName,
+			Endpoint: *mcpEndpoint,
+		}); err != nil {
+			return fmt.Errorf("register MCP server: %w", err)
+		}
+		go func() {
+			mcpContext, cancel := context.WithTimeout(ctx, 35*time.Second)
+			defer cancel()
+			if err := host.Connect(mcpContext, *mcpID); err != nil {
+				logger.Error("MCP server connection failed", "id", *mcpID, "error", err)
+				return
+			}
+			if err := host.LoadCapabilities(mcpContext, *mcpID); err != nil {
+				logger.Error("MCP capability load failed", "id", *mcpID, "error", err)
+				return
+			}
+			if !*mcpEnable {
+				logger.Info("MCP server connected but disabled", "id", *mcpID)
+				return
+			}
+			if _, err := host.Enable(*mcpID); err != nil {
+				logger.Error("MCP server enable failed", "id", *mcpID, "error", err)
+				return
+			}
+			logger.Info("MCP server ready", "id", *mcpID)
+		}()
+	}
 	logger.Info("starting runtime", "instance_id", rt.Snapshot().InstanceID, "listen", *listenAddress)
 	if err := server.Run(ctx); err != nil {
 		return err

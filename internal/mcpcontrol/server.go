@@ -78,11 +78,11 @@ type Spec struct {
 }
 
 type Capabilities struct {
-	ProtocolVersion string
-	ServerName      string
-	ServerVersion   string
-	ToolsSupported  bool
-	ToolCount       int
+	ProtocolVersion string `json:"protocol_version"`
+	ServerName      string `json:"server_name"`
+	ServerVersion   string `json:"server_version"`
+	ToolsSupported  bool   `json:"tools_supported"`
+	ToolCount       int    `json:"tool_count"`
 }
 
 type Snapshot struct {
@@ -215,6 +215,17 @@ func (s *Server) LoadCapabilities(expected Revision, capabilities Capabilities) 
 		s.snapshot.CapabilityState = CapabilitiesLoaded
 		s.snapshot.Capabilities = capabilities
 		s.snapshot.FailureReason = FailureNone
+		return nil
+	}
+	return s.update(expected, action)
+}
+
+func (s *Server) MarkCapabilitiesStale(expected Revision) (Snapshot, error) {
+	action := func() error {
+		if s.snapshot.Connection != ConnectionConnected || s.snapshot.CapabilityState != CapabilitiesLoaded {
+			return s.invalid("mark capabilities stale")
+		}
+		s.snapshot.CapabilityState = CapabilitiesStale
 		return nil
 	}
 	return s.update(expected, action)

@@ -6,8 +6,8 @@
 
 ## 工作区现状（先确认，别假设）
 
-- 已有 Go 1.27 Headless Runtime 骨架：`go.mod`、`cmd/termcp-harness`、`internal/runtime`、`internal/controlapi`、`internal/daemon`、`internal/toolcall`、`internal/approval` 和 `internal/mcpcontrol`。当前仍**没有 CI，也尚未 `git init`**。
-- 当前已实现 Runtime 实例生命周期、本地控制 API、工具调用/审批状态机、MCP Server 注册表模型和只读 Streamable HTTP 探测器，并通过 Core 0.2.8 真实握手与只读 `term` 帮助调用；**持久 MCP 会话、Agent Loop、终端 Session 工具执行、审批集成和事件日志尚未实现**。
+- 已有 Go 1.27 Headless Runtime 与 Wails Desktop：`cmd/termcp-harness`、`internal/runtime`、`internal/controlapi`、`internal/daemon`、`internal/toolcall`、`internal/approval`、`internal/mcpcontrol`、`internal/eventlog`、`internal/controlclient` 和 `desktop/`。当前仍**没有 CI**；Git 已初始化，开发分支为 `dev`。
+- 当前已实现 Runtime 实例生命周期、本地控制 API、有界事件日志、工具调用/审批状态机、持久 MCP Host、`tools/list_changed` 失效、Streamable HTTP 探测器和 Desktop 只读工作台，并通过 Core 0.2.8 真实连接、能力读取与只读 `term` 帮助调用；**MCP 认证/自动重连、Agent Loop、终端 Session 工具执行和审批集成尚未实现**。
 - 这是**独立工作区**，不与旧实现合并；旧代码只作参考（见下节）。
 - 引入技术栈时，把真实可执行命令（含跑单个测试的写法）补进本文件与 README，否则后续 Agent 只能猜。
 - Harness Runtime 与 Terminal Workspace 必须分层；Runtime 目标是可 headless 运行，Terminal Workspace 是第一方体验层，不是唯一入口。
@@ -16,7 +16,7 @@
 
 ## 开发命令
 
-模块使用 Go 标准库与 `github.com/mark3labs/mcp-go v0.50.0`；依赖校验和必须与本机 Core v0.2.8 对应的公开 `go.sum` 保持一致：
+Runtime 使用 Go 标准库与 `github.com/mark3labs/mcp-go v0.50.0`；共享依赖校验和必须与本机 Core v0.2.8 对应的公开 `go.sum` 保持一致。Desktop 使用 Wails v2.15.0：
 
 ```powershell
 go test -race ./...
@@ -25,14 +25,35 @@ go build ./...
 go run ./cmd/termcp-harness version
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787
 go run ./cmd/termcp-harness mcp probe --endpoint http://127.0.0.1:18765/stream
+go run ./cmd/termcp-harness serve --mcp-endpoint http://127.0.0.1:18765/stream
+```
+
+Desktop 安装、检查、构建与启动：
+
+```powershell
+Set-Location .\desktop\frontend
+npm ci
+npm run check
+Set-Location ..
+wails build -m -nosyncgomod -nopackage -clean
+.\build\bin\termcp-harness-desktop.exe --runtime http://127.0.0.1:8787
+```
+
+Desktop 前端检查单条命令：
+
+```powershell
+Set-Location .\desktop\frontend
+npm run check
 ```
 
 单测示例：
 
 ```powershell
 go test ./internal/runtime -run '^TestRuntimeLifecycle$' -count=1
+go test ./internal/eventlog -run '^TestDiagnosticEvictionIsVisible$' -count=1
 $env:TERMCP_CORE_MCP_URL = 'http://127.0.0.1:18765/stream'
 go test ./internal/mcpcontrol -run '^TestProbeTermcpCoreIntegration$' -count=1
+go test ./internal/mcpcontrol -run '^TestHostLifecycleAndCapabilityNotification$' -count=1
 ```
 
 若 Agent 沙盒拒绝访问默认 Go 缓存，可把 `GOCACHE` 和 `GOTMPDIR` 指向任务临时目录后重跑；不要修改全局 Go 配置。控制 API 当前没有认证，只能绑定回环地址，不能通过 `0.0.0.0` 或局域网 IP 暴露。
@@ -73,6 +94,8 @@ go test ./internal/mcpcontrol -run '^TestProbeTermcpCoreIntegration$' -count=1
 - `docs/contracts/README.md` — Core 与 Harness 公开契约、来源、版本和验证记录规范。
 - `docs/contracts/harness/v0.1/state-machines.md` — 工具调用、审批、结果未知与自动重试语义；尚未接入真实 MCP/Core。
 - `docs/contracts/harness/v0.1/mcp-server-states.md` — MCP Server 的登记、连接、能力、启用和所有权状态边界。
+- `docs/contracts/harness/v0.1/event-log.md` — 本地事件顺序、有界保留、截断和补拉 API。
+- `docs/contracts/harness/v0.1/desktop-shell.md` — Desktop Wails 桥接、端点限制、视觉边界和未实现能力。
 - `docs/contracts/core/v0.2.8/metadata.md` — 已安装 Core 0.2.8 的来源、版本和实际端点证据。
 - `docs/contracts/core/v0.2.8/mcp.md` — Core MCP 握手、能力、工具 Schema 与待验证行为。
 - 文档名带版本号：升版时同步更新交叉引用和 `docs/README.md`，不要留下两个并行版本。

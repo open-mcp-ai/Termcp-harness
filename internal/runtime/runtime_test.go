@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 )
 
 func TestRuntimeLifecycle(t *testing.T) {
@@ -108,4 +110,35 @@ func TestConcurrentSnapshots(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestLifecycleEventsAreRecordedInOrder(t *testing.T) {
+	journal := eventlog.New()
+	rt, err := New("test", WithEventLog(journal))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if err := rt.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := rt.MarkStopping(); err != nil {
+		t.Fatalf("MarkStopping() error = %v", err)
+	}
+	if err := rt.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+
+	window, err := journal.Query(0, 10)
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	want := []eventlog.Type{eventlog.TypeRuntimeStarted, eventlog.TypeRuntimeStopping, eventlog.TypeRuntimeStopped}
+	if len(window.Events) != len(want) {
+		t.Fatalf("events = %+v, want %d", window.Events, len(want))
+	}
+	for i, eventType := range want {
+		if window.Events[i].Type != eventType || window.Events[i].SubjectID != rt.Snapshot().InstanceID {
+			t.Fatalf("event %d = %+v, want type %s", i, window.Events[i], eventType)
+		}
+	}
 }
