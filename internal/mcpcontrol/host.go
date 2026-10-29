@@ -15,17 +15,23 @@ import (
 )
 
 const (
-	defaultHostTimeout       = 15 * time.Second
-	defaultHostClientName    = "termcp-harness"
-	defaultHostClientVersion = "dev"
+	defaultHostTimeout          = 15 * time.Second
+	defaultToolCallTimeout      = 30 * time.Second
+	defaultMaxToolArgumentsSize = 1 << 20
+	defaultMaxToolResultSize    = 4 << 20
+	defaultHostClientName       = "termcp-harness"
+	defaultHostClientVersion    = "dev"
 )
 
 type HostOptions struct {
-	ClientName     string
-	ClientVersion  string
-	Timeout        time.Duration
-	MaxTools       int
-	MaxSchemaBytes int
+	ClientName           string
+	ClientVersion        string
+	Timeout              time.Duration
+	ToolCallTimeout      time.Duration
+	MaxTools             int
+	MaxSchemaBytes       int
+	MaxToolArgumentsSize int
+	MaxToolResultSize    int
 }
 
 type HostOption func(*hostConfig)
@@ -63,17 +69,21 @@ type managedServer struct {
 	client      clientConnection
 	initialized *mcp.InitializeResult
 	tools       []ToolDescriptor
+	authToken   string
 }
 
 func NewHost(options ...HostOption) *Host {
 	config := hostConfig{
 		factory: defaultClientFactory,
 		options: HostOptions{
-			ClientName:     defaultHostClientName,
-			ClientVersion:  defaultHostClientVersion,
-			Timeout:        defaultHostTimeout,
-			MaxTools:       defaultMaxTools,
-			MaxSchemaBytes: defaultMaxSchemaBytes,
+			ClientName:           defaultHostClientName,
+			ClientVersion:        defaultHostClientVersion,
+			Timeout:              defaultHostTimeout,
+			ToolCallTimeout:      defaultToolCallTimeout,
+			MaxTools:             defaultMaxTools,
+			MaxSchemaBytes:       defaultMaxSchemaBytes,
+			MaxToolArgumentsSize: defaultMaxToolArgumentsSize,
+			MaxToolResultSize:    defaultMaxToolResultSize,
 		},
 	}
 	for _, option := range options {
@@ -103,7 +113,7 @@ func (h *Host) Register(spec Spec) (Snapshot, error) {
 		h.mu.Unlock()
 		return Snapshot{}, fmt.Errorf("MCP server %q is already registered", spec.ID)
 	}
-	h.servers[spec.ID] = &managedServer{server: server}
+	h.servers[spec.ID] = &managedServer{server: server, authToken: spec.AuthToken}
 	h.mu.Unlock()
 
 	if err := h.record(eventlog.TypeMCPRegistered, snapshot, nil); err != nil {
@@ -135,7 +145,7 @@ func (h *Host) Connect(ctx context.Context, id string) error {
 	operationContext, cancel := context.WithTimeout(ctx, h.options.options.Timeout)
 	defer cancel()
 
-	connection, err := h.options.factory(next.Endpoint)
+	connection, err := h.options.factory(next.Endpoint, managed.authToken)
 	if err != nil {
 		return h.fail(managed, classifyFailure(err), fmt.Errorf("create MCP client: %w", err))
 	}

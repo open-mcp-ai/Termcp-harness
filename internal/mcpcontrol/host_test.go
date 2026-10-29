@@ -16,7 +16,7 @@ func TestHostLifecycleAndCapabilityNotification(t *testing.T) {
 	client := newFakeHostClient()
 	host := NewHost(
 		WithHostEventLog(journal),
-		withHostClientFactory(func(string) (clientConnection, error) { return client, nil }),
+		withHostClientFactory(func(string, string) (clientConnection, error) { return client, nil }),
 	)
 	registerTestServer(t, host)
 
@@ -115,7 +115,7 @@ func TestHostMarksConnectionFailureUnavailable(t *testing.T) {
 	client.startErr = context.DeadlineExceeded
 	host := NewHost(
 		WithHostEventLog(journal),
-		withHostClientFactory(func(string) (clientConnection, error) { return client, nil }),
+		withHostClientFactory(func(string, string) (clientConnection, error) { return client, nil }),
 	)
 	registerTestServer(t, host)
 
@@ -134,7 +134,7 @@ func TestHostMarksConnectionFailureUnavailable(t *testing.T) {
 func TestHostSerializesConcurrentConnect(t *testing.T) {
 	client := newFakeHostClient()
 	var factoryCalls atomic.Int32
-	host := NewHost(withHostClientFactory(func(string) (clientConnection, error) {
+	host := NewHost(withHostClientFactory(func(string, string) (clientConnection, error) {
 		factoryCalls.Add(1)
 		return client, nil
 	}))
@@ -215,6 +215,10 @@ type fakeHostClient struct {
 	notificationFunc func(mcp.JSONRPCNotification)
 	initializeResult *mcp.InitializeResult
 	toolsResult      *mcp.ListToolsResult
+	toolCallResult   *mcp.CallToolResult
+	toolCallErr      error
+	toolCallFunc     func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	toolCallRequests []mcp.CallToolRequest
 	startErr         error
 	closed           atomic.Bool
 }
@@ -233,6 +237,7 @@ func newFakeHostClient() *fakeHostClient {
 			Description: "Terminal command DSL",
 			InputSchema: mcp.ToolInputSchema{Type: "object", Properties: map[string]any{}},
 		}}},
+		toolCallResult: mcp.NewToolResultText("ok"),
 	}
 }
 
@@ -249,6 +254,19 @@ func (f *fakeHostClient) Initialize(context.Context, mcp.InitializeRequest) (*mc
 
 func (f *fakeHostClient) ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
 	return f.toolsResult, nil
+}
+
+func (f *fakeHostClient) CallTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	f.mu.Lock()
+	f.toolCallRequests = append(f.toolCallRequests, request)
+	call := f.toolCallFunc
+	result := f.toolCallResult
+	callErr := f.toolCallErr
+	f.mu.Unlock()
+	if call != nil {
+		return call(ctx, request)
+	}
+	return result, callErr
 }
 
 func (f *fakeHostClient) OnNotification(handler func(mcp.JSONRPCNotification)) {

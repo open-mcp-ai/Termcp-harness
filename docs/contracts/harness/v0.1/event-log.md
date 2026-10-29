@@ -46,6 +46,26 @@
 - `mcp.server.disconnected`
 - `mcp.server.unavailable`
 
+Core 实例识别会写入以下控制事件：
+
+- `core.instance.bound`
+- `core.instance.changed`
+- `core.instance.unavailable`
+- `core.ownership.conflict`
+
+当前受控工具调用会写入以下控制事件：
+
+- `tool.call.proposed`
+- `tool.call.ready`
+- `tool.call.blocked`
+- `tool.call.dispatching`
+- `tool.call.approval_pending`
+- `tool.call.succeeded`
+- `tool.call.failed`
+- `tool.call.outcome_unknown`
+
+工具调用事件以 Harness 生成的 call ID 作为 `subject_id`。当前没有可信的远端 operation ID，因此 `correlation_id` 保持为空。事件不记录工具参数正文或结果正文，只记录来源、工具名、副作用类别、状态、revision、策略原因和结果字节数等元数据。`tool.call.dispatching` 在 MCP 请求前写入，表示即将派发，不代表远端已接受或开始执行。`tool.call.approval_pending` 表示远端 review 已接受请求但尚未执行，只记录结果和挂起说明的字节数，不记录命令正文。
+
 ## 3. 有界保留
 
 - 控制事件默认保留 4096 条，不自动淘汰。
