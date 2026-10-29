@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
@@ -38,12 +39,18 @@ type MCPServers struct {
 	ControlPlaneOn bool                  `json:"control_plane_configured"`
 }
 
+type CoreState struct {
+	Configured bool                   `json:"configured"`
+	Core       *coreinstance.Snapshot `json:"core,omitempty"`
+}
+
 type Bootstrap struct {
 	Endpoint string           `json:"endpoint"`
 	Health   Health           `json:"health"`
 	Runtime  runtime.Snapshot `json:"runtime"`
 	Events   eventlog.Window  `json:"events"`
 	MCP      MCPServers       `json:"mcp"`
+	Core     CoreState        `json:"core"`
 }
 
 type Client struct {
@@ -85,6 +92,9 @@ func (c *Client) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	}
 	if _, err := c.getJSON(ctx, "/v1/mcp/servers", []int{http.StatusOK}, &bootstrap.MCP); err != nil {
 		return Bootstrap{}, fmt.Errorf("read MCP servers: %w", err)
+	}
+	if _, err := c.getJSON(ctx, "/v1/core", []int{http.StatusOK}, &bootstrap.Core); err != nil {
+		return Bootstrap{}, fmt.Errorf("read Core identity: %w", err)
 	}
 	return bootstrap, nil
 }

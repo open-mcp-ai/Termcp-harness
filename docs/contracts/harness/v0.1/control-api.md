@@ -2,13 +2,13 @@
 
 > 状态：代码与本地测试已覆盖；公开兼容性尚未承诺。
 >
-> 日期：2026-10-28
+> 日期：2026-10-29
 >
 > 适用实现：`cmd/termcp-harness serve`
 
 ## 边界
 
-本版只提供 Harness Runtime 的本地生命周期与健康快照。它不包含 Session、MCP Server、工具调用、审批或 Core 状态，也不代表这些能力已经实现。
+本版提供 Harness Runtime 生命周期、事件窗口、MCP Server 列表和已绑定 Core 的只读身份快照。它不包含 Session、工具调用、审批决定或 Core 进程控制能力。
 
 事件补拉入口见 `event-log.md`；事件模型也已单独版本化。
 
@@ -52,8 +52,21 @@ Runtime 处于 `running` 时返回 `200`，其他生命周期状态返回 `503`�
 
 按 Harness 本地 `sequence` 补拉有界事件窗口。详细语义、容量、截断标记和 payload 限制见 `event-log.md`。
 
+## `GET /v1/core`
+
+返回当前 Harness 绑定的 Core 实例身份。未配置 Core 时：
+
+```json
+{"configured":false}
+```
+
+已配置且获得快照时返回 `configured=true` 和 `core`。字段、所有权、冲突和重启语义见 `core-instance.md`。
+
+该端点只证明 Harness 基于公开契约观察到的实例身份；`ownership=external` 表示不拥有 Core 进程，不得据此停止进程。
+
 ## 非目标
 
 - 不从本地时间推断 Core 或 MCP 事件因果。
 - 不把健康响应描述为 Core、MCP 工具或 Agent 能力就绪。
+- 不把端口可达或 PID 观测写成永久进程所有权。
 - 不提供任意 URL、文件、命令或 MCP 调用的通用桥接。

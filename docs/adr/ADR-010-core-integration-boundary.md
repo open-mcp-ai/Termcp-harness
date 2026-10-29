@@ -161,3 +161,12 @@ PID 可能复用，端口可能被重新绑定，因此不能只用 PID 或端�
 **优先验证 Harness 自己启动受管 Core 子进程；daemon 模式作为备选，前提是实例所有权可验证。**
 
 **如果 Core 无法提供足够的启动、身份、健康或数据目录契约，记录为 Core 协作项，不在 Harness 内复制内部实现。**
+
+## 7. 2026-10-29 实施进展
+
+- 已实现外部 Core 的 `/api/version` + `/api/daemon` 身份识别。
+- 已用端点、PID、启动时间和版本生成实例键，未把端口或 PID 单项当作所有权。
+- 已实现 managed 绑定的 PID + 启动时间双重校验；不匹配时进入 `unverified/conflict`。
+- 已接入 `GET /v1/core`、`core identify` CLI、控制事件和 Desktop 只读面板。
+- 尚未实现受管 Core 子进程的启动、停止、数据目录独占和进程路径验证。
+- ADR 状态仍为 Proposed；本进展不等于长期启动模式已确认。

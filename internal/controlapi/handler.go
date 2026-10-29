@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
@@ -28,6 +29,7 @@ type EventReader interface {
 type handlerOptions struct {
 	events EventReader
 	mcp    MCPLister
+	core   CoreReader
 }
 
 type Option func(*handlerOptions)
@@ -48,6 +50,17 @@ func WithMCPRegistry(registry MCPLister) Option {
 	}
 }
 
+type CoreReader interface {
+	Configured() bool
+	Snapshot() (coreinstance.Snapshot, bool)
+}
+
+func WithCore(manager CoreReader) Option {
+	return func(options *handlerOptions) {
+		options.core = manager
+	}
+}
+
 type errorResponse struct {
 	Error string `json:"error"`
 }
@@ -58,6 +71,11 @@ type mcpServersResponse struct {
 	Connected      int                   `json:"connected"`
 	Ready          int                   `json:"ready"`
 	ControlPlaneOn bool                  `json:"control_plane_configured"`
+}
+
+type coreResponse struct {
+	Configured bool                   `json:"configured"`
+	Core       *coreinstance.Snapshot `json:"core,omitempty"`
 }
 
 func NewHandler(source Snapshotter, options ...Option) http.Handler {
@@ -86,6 +104,16 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 
 	mux.HandleFunc("GET /v1/runtime", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, source.Snapshot())
+	})
+	mux.HandleFunc("GET /v1/core", func(w http.ResponseWriter, _ *http.Request) {
+		response := coreResponse{}
+		if config.core != nil {
+			response.Configured = config.core.Configured()
+			if snapshot, ok := config.core.Snapshot(); ok {
+				response.Core = &snapshot
+			}
+		}
+		writeJSON(w, http.StatusOK, response)
 	})
 	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, request *http.Request) {
 		if config.events == nil {
