@@ -1,5 +1,7 @@
 export type RuntimeState = "new" | "running" | "stopping" | "stopped" | "failed";
 export type EventClass = "control" | "diagnostic";
+export type CoreIdentityState = "identified" | "unavailable" | "conflict";
+export type CoreOwnership = "external" | "managed" | "unverified";
 
 export interface Health {
   status: string;
@@ -65,12 +67,37 @@ export interface MCPState {
   control_plane_configured: boolean;
 }
 
+export interface CoreIdentity {
+  endpoint: string;
+  state: CoreIdentityState;
+  ownership: CoreOwnership;
+  ownership_verified: boolean;
+  version?: string;
+  daemon: boolean;
+  pid?: number;
+  started_at?: string;
+  log_path?: string;
+  idle_timeout_ms?: number;
+  instance_key?: string;
+  observed_at: string;
+  revision: number;
+  changed: boolean;
+  previous_instance_key?: string;
+  last_error?: string;
+}
+
+export interface CoreState {
+  configured: boolean;
+  core?: CoreIdentity;
+}
+
 export interface Bootstrap {
   endpoint: string;
   health: Health;
   runtime: RuntimeSnapshot;
   events: EventWindow;
   mcp: MCPState;
+  core: CoreState;
 }
 
 export interface DesktopBridge {

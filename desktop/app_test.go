@@ -26,6 +26,20 @@ func TestAppBootstrapReadsRuntimeContract(t *testing.T) {
 				"total":                    0,
 				"control_plane_configured": true,
 			})
+		case "/v1/core":
+			writeJSON(t, w, map[string]any{
+				"configured": true,
+				"core": map[string]any{
+					"endpoint":     "http://127.0.0.1:18765",
+					"state":        "identified",
+					"ownership":    "external",
+					"version":      "v0.2.8",
+					"pid":          14560,
+					"instance_key": "instance-key",
+					"observed_at":  "2026-10-29T01:00:00Z",
+					"revision":     1,
+				},
+			})
 		default:
 			http.NotFound(w, request)
 		}
@@ -43,7 +57,7 @@ func TestAppBootstrapReadsRuntimeContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bootstrap() error = %v", err)
 	}
-	if bootstrap.Runtime.InstanceID != "runtime-1" || !bootstrap.MCP.ControlPlaneOn {
+	if bootstrap.Runtime.InstanceID != "runtime-1" || !bootstrap.MCP.ControlPlaneOn || bootstrap.Core.Core == nil {
 		t.Fatalf("Bootstrap() = %+v", bootstrap)
 	}
 	if got := app.RuntimeEndpoint(); got != server.URL {

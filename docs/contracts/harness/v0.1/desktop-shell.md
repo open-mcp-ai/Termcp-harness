@@ -29,7 +29,7 @@ React/TypeScript/Vite 使用 `package-lock.json` 固定实际依赖。`@xterm/xt
 
 | 方法 | 作用 |
 |---|---|
-| `Bootstrap()` | 读取 Health、Harness Runtime 快照、最新事件窗口和 MCP Server 列表 |
+| `Bootstrap()` | 读取 Health、Harness Runtime 快照、最新事件窗口、Core 身份和 MCP Server 列表 |
 | `Events(after, limit)` | 按 Harness 本地序号补拉事件 |
 | `RuntimeEndpoint()` | 返回当前回环 Harness Runtime 地址 |
 | `WindowMinimise()` | 最小化窗口 |
@@ -58,10 +58,10 @@ http://127.0.0.1:8787
 
 ## 5. 当前界面
 
-- 左侧固定 Rail：事件时间线、Harness Runtime、MCP Server。
+- 左侧固定 Rail：事件时间线、Harness Runtime、Termcp Core、MCP Server。
 - 中间事件带：本地 sequence、时间、类型、subject/correlation、class 筛选和可展开载荷。
-- 右侧事实检查器：Harness Runtime 生命周期、实例、版本、启动时间和 MCP 登记/连接/能力/启用状态。
-- 不可达时顶部状态为“状态未知”，Harness Runtime、MCP 和事件流统一标记为“最后快照”。
+- 右侧事实检查器：Harness Runtime 生命周期、Core 端点/所有权/PID/启动时间/实例键，以及 MCP 登记/连接/能力/启用状态。
+- 不可达时顶部状态为“状态未知”，Harness Runtime、Core、MCP 和事件流统一标记为“最后快照”。
 - 保留快照中的“运行中”“就绪”只作为最后已知值，并附带过期说明，不作为当前状态。
 - 首次启动即不可达时显示明确空态，不再保留“正在读取”加载提示。
 - 网络错误使用简短中文说明，原始技术错误和启动命令收在可展开的“技术详情”中。
@@ -78,6 +78,7 @@ http://127.0.0.1:8787
 
 - 终端 Session、`@xterm/xterm` 与 WebSocket 字节流。
 - Harness Runtime 自动启动、停止和实例所有权管理。
+- Core 子进程自动启动、停止和 managed 所有权创建。
 - Desktop 认证、远程 Harness Runtime、TLS 和凭据引用。
 - MCP 连接配置、能力变更通知和持久会话。
 - 审批决定、工具时间线和结果未知恢复交互。
