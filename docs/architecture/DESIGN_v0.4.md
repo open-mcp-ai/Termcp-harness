@@ -358,7 +358,7 @@ Terminal Workspace 的初版界面方向采用 `docs/adr/ADR-013-harness-canvas-
 - Activity 统一入口并保留实时事件、历史记录和诊断视图。
 - 面板、模块和任务生命周期必须分开。
 
-该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；标签合并、Workspace 导入导出、真实 Terminal 和第三方模块贡献仍未完成。
+该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；面板标签合并与边缘分栏已验证，相关面板已支持跟随/锁定 Session、显式关联未知、关闭视图提示和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。Workspace 导入导出、真实 Terminal 实时订阅、跨 Workspace 迁移和第三方模块贡献仍未完成。
 
 ### 9.1 共享执行现场
 

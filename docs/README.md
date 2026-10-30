@@ -19,7 +19,8 @@ docs/
 ├── governance/
 │   └── AGENTS_v0.3.md
 ├── ux/
-│   └── UX-RECOVERY.md
+│   ├── UX-RECOVERY.md
+│   └── UX-OPTIMIZATION-BACKLOG.md
 ├── development/
 │   └── BRANCHING.md
 ├── contracts/
@@ -62,17 +63,18 @@ docs/
 6. `docs/adr/ADR-009-modular-composition.md`（模块安装与自由组合）
 7. `docs/adr/ADR-013-harness-canvas-layout.md`（Canvas 初版布局）
 8. `docs/ux/UX-RECOVERY.md`
-9. 相关 ADR
-10. `docs/development/BRANCHING.md`
-11. `docs/contracts/README.md`
-12. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
-13. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
-14. `docs/contracts/harness/v0.1/agent-session.md`（确定性 Agent Session 状态与当前边界）
-15. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
-16. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
-17. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
-18. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
-19. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
+9. `docs/ux/UX-OPTIMIZATION-BACKLOG.md`（Deferred 界面优化候选；不进入当前里程碑）
+10. 相关 ADR
+11. `docs/development/BRANCHING.md`
+12. `docs/contracts/README.md`
+13. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
+14. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
+15. `docs/contracts/harness/v0.1/agent-session.md`（确定性 Agent Session 状态与当前边界）
+16. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
+17. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
+18. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
+19. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
+20. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
 
 ## 文档职责
 
@@ -82,7 +84,7 @@ docs/
 | `docs/architecture/` | 三平面架构、工具链、状态语义、上游关系与开放边界 |
 | `docs/adr/` | 已提出或已接受的产品、架构和契约决策 |
 | `docs/governance/` | 代理规则归档；当前规则以根目录 `AGENTS.md` 为准 |
-| `docs/ux/` | 高风险场景的用户提示与恢复行动 |
+| `docs/ux/` | 高风险场景的用户提示、恢复行动和 Deferred 界面优化候选 |
 | `docs/development/` | 分支、提交、发布和开发流程 |
 | `docs/contracts/` | Core 与 Harness 公开契约、来源、版本和验证记录 |
 
