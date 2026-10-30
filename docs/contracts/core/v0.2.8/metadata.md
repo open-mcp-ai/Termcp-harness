@@ -1,6 +1,6 @@
 # Termcp Core v0.2.8 契约元数据
 
-> 状态：原 release 基线保留；2026-10-31 已用本地 `f6cefec-dirty` 源码构建覆盖当前运行实例进行审批关联验证。本文记录两者的来源和边界。
+> 状态：原 release 基线保留；2026-10-31 已用 rebase 后的 `938c53f` 源码构建覆盖当前运行实例进行审批关联验证。本文记录两者的来源和边界。
 >
 > 不等同于完整行为兼容性认证。
 
@@ -13,7 +13,7 @@
 - 官方仓库：<https://github.com/open-mcp-ai/Termcp>
 - 官方 `main` 基线：`0595cb5c9ce2181de3f8049b06dc4c0ef0c2a6db`
 
-原 v0.2.8 release 证据来自已安装 release 的版本输出、运行时端点和实例自报文档。当前本机源码目录 `D:\data\code\github\Termcp-web` 位于 `fix/approval-correlation`，HEAD 为 `f6cefec`，审批关联改动仍在工作区；本地重建实例是 `dev-f6cefec-dirty`，不能等同于正式 v0.2.8 发布包。
+原 v0.2.8 release 证据来自已安装 release 的版本输出、运行时端点和实例自报文档。当前本机源码目录 `D:\data\code\github\Termcp-web` 位于 `fix/approval-correlation`，HEAD 为 `938c53f`，已 rebase 到 `upstream/dev@8a3f9e8`；本地重建实例是 `dev-938c53f`，不能等同于正式 v0.2.8 发布包。
 
 ## 已核验实例信息
 
@@ -43,16 +43,17 @@ PID 和启动时间是这次观测值，不是稳定契约字段。
 {
   "daemon": true,
   "idle_timeout_ms": 30000,
-  "pid": 23424,
-  "started_at": "2026-10-30T17:58:37Z",
-  "version": "dev-f6cefec-dirty"
+  "pid": 36376,
+  "started_at": "2026-10-30T18:44:50Z",
+  "version": "dev-938c53f"
 }
 ```
 
-- `termcp --version`：`termcp dev-f6cefec-dirty (commit f6cefec) built 2026-10-30T17:57:19Z`。
+- `termcp --version`：`termcp dev-938c53f (commit 938c53f) built 2026-10-30T18:44:20Z`。
 - 安装路径仍为 `C:\Users\miles\.termcp\versions\v0.2.8\termcp.exe`，这是本地临时覆盖，不代表该目录内容仍是正式 v0.2.8 release。
-- 安装二进制 SHA-256：`09DC2C859687E120BBC0FDEEFC9911F51A43F728DA0090C42A655E9408204166`。
+- 安装二进制 SHA-256：`BC6524F1CB3CC8818AEE423DAAF359F3D7DE87AE6FC9B57740E40FE51A04E6D6`。
 - 原 release 二进制备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-approval-correlation`。
+- rebase 前开发二进制备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-rebased-pr`。
 - 审批过期、Session 关闭后 `cancelled`、可信 `approval_id` 和 Desktop 批准闭环的复验结果见 `known-issues.md` 第 9 节。
 
 ## 实例自报文档

@@ -187,15 +187,16 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalSessionDeathStateCo
 
 第 8 节记录的是旧安装二进制。当前工作区随后按原 daemon 方式重建并重启，验证结果如下。
 
-- 构建：`dev-f6cefec-dirty (commit f6cefec)`。
+- 构建：`dev-938c53f (commit 938c53f)`；分支已 rebase 到 `upstream/dev@8a3f9e8`。
 - 安装位置：`C:\Users\miles\.termcp\versions\v0.2.8\termcp.exe`。
-- 旧二进制备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-approval-correlation`。
+- 原始 release 备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-approval-correlation`。
+- rebase 前开发二进制备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-rebased-pr`。
 - 运行方式：`termcp daemon start --host 127.0.0.1 --port 18765 --data-dir C:\Users\miles\.termcp --assets C:\Users\miles\.termcp\assets --log-level info --idle-timeout 30s`。
-- 运行实例：PID 23424，`daemon=true`，`idle_timeout_ms=30000`。
+- 运行实例：PID 36376，`daemon=true`，`idle_timeout_ms=30000`。
 - `TestTermcpCoreApprovalExpiryContract`：通过；过期审批不能再执行。
 - `TestTermcpCoreApprovalSessionDeathStateContract`：通过；Session 关闭后审批可查询为 `cancelled`。
 - 审批关联：Harness 返回 `correlation_capability=trusted`，pending 结果包含可信 `approval_id`、`session_id` 和 `expires_at`。
 - 真实 Desktop 正向闭环：点击批准后，服务端确认 `approved`、执行结果 `succeeded`、Agent Session `completed`；远程临时文件回读为预期测试内容。
 - 真实 Desktop 过期路径：审批超时后点击批准得到服务端 `expired`，未执行写入，UI 显示“已过期”和“服务端已确认”。
 - 本轮还修复了 Harness 前端在 Runtime 实例重启后仅比较事件 `latest_sequence`、导致新实例低序号快照被丢弃的问题；现在只有 `runtime.instance_id` 相同时才拒绝倒退序号。
-- 发布边界：`approval_id` 关联改动仍在 Core 工作区，尚未提交或进入正式发布；当前验证对象是 `f6cefec-dirty`，不能据此宣称正式 v0.2.8 发布包已包含全部修复。
+- 发布边界：`approval_id` 关联改动已提交为 `938c53f` 并推送到 Core PR #238，但尚未合并或进入正式发布；当前验证对象是 `dev-938c53f`，不能据此宣称正式 v0.2.8 发布包已包含全部修复。
