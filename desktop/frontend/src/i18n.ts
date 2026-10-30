@@ -27,6 +27,7 @@ const zhCN = {
   },
   nav: {
     label: "工作区导航",
+    agent: "Agent Session",
     core: "Termcp Core",
     ledger: "事件流",
     runtime: "Harness Runtime",
@@ -51,11 +52,11 @@ const zhCN = {
     reading: "读取实例、事件与 MCP 服务状态。",
     runThroughDesktop: "请从 Desktop 打开工作区。",
     inspectorPlaceholder: "连接 Harness Runtime 后显示实例状态。",
-    readOnly: "只读视图",
+    readOnly: "观察与受保护审批",
     controlAPI: "控制 API v1",
     authoritative: "Harness Runtime 状态以服务端为准",
     noSnapshot: "暂无 Harness Runtime 快照",
-    observerNote: "Desktop 只负责观察，Harness Runtime 独立运行",
+    observerNote: "Desktop 只提交显式审批，Harness Runtime 独立运行",
     runtimeDetails: "Harness Runtime 详情",
   },
   event: {
@@ -180,6 +181,49 @@ const zhCN = {
     permission: "权限不足",
     unknown: "未知错误",
   },
+  agent: {
+    context: "Agent 执行现场",
+    contextStale: "Agent 执行现场 · 最后快照",
+    title: "Agent Session",
+    empty: "暂无 Agent Session",
+    emptyBody: "通过受保护的 Agent 控制 API 创建并运行 Session。",
+    approvals: "待处理审批",
+    approvalsEmpty: "当前没有已关联审批",
+    call: "当前调用",
+    approval: "审批",
+    tool: "工具状态",
+    completion: "完成要求",
+    execution: "执行结果",
+    approve: "批准",
+    reject: "拒绝",
+    deciding: "正在提交…",
+    approvalDisabled: "Desktop 未配置审批 token 文件，本次仅显示审批状态。",
+    approvalCapabilityUnverified: "尚未观察到可信 approval_id，审批关联能力仍未验证。",
+    noSummary: "没有可显示的审批摘要，请勿盲批。",
+    decisionUnknown: "审批结果未知：请求可能已提交，请勿重复操作。",
+    decisionFailed: "审批操作失败，请稍后重试。",
+    decisionWarning: "审批状态已确认，但运行记录写入失败。",
+    lastKnownNote: "Harness Runtime 当前不可达。以下 Session 和审批状态可能已经过期。",
+  },
+  agentState: {
+    new: "未运行",
+    running: "运行中",
+    waiting_approval: "等待审批",
+    waiting_execution: "等待执行结果",
+    completed: "已完成",
+    blocked: "已阻断",
+    failed: "失败",
+    cancelled: "已取消",
+    expired: "已过期",
+    unknown: "结果未知",
+  },
+  executionState: {
+    running: "执行中",
+    submitted: "已提交输入",
+    succeeded: "执行成功",
+    failed: "执行失败",
+    unknown: "结果未知",
+  },
   loading: {
     readFailed: "读取失败",
   },
@@ -207,4 +251,12 @@ export function coreStateLabel(value: string): string {
 
 export function coreOwnershipLabel(value: string): string {
   return messages.coreOwnership[value as keyof typeof messages.coreOwnership] ?? value;
+}
+
+export function agentStateLabel(value: string): string {
+  return messages.agentState[value as keyof typeof messages.agentState] ?? value;
+}
+
+export function executionStateLabel(value: string): string {
+  return messages.executionState[value as keyof typeof messages.executionState] ?? value;
 }

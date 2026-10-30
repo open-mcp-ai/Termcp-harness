@@ -64,7 +64,48 @@ Core 实例识别会写入以下控制事件：
 - `tool.call.failed`
 - `tool.call.outcome_unknown`
 
+审批协调器会写入以下控制事件：
+
+- `approval.request.tracked`
+- `approval.decision.submitting`
+- `approval.approved`
+- `approval.rejected`
+- `approval.expired`
+- `approval.cancelled`
+- `approval.outcome_unknown`
+- `approval.execution.observed`
+
+审批收敛失败会写入诊断事件 `approval.reconciliation.failed`。
+
 工具调用事件以 Harness 生成的 call ID 作为 `subject_id`。当前没有可信的远端 operation ID，因此 `correlation_id` 保持为空。事件不记录工具参数正文或结果正文，只记录来源、工具名、副作用类别、状态、revision、策略原因和结果字节数等元数据。`tool.call.dispatching` 在 MCP 请求前写入，表示即将派发，不代表远端已接受或开始执行。`tool.call.approval_pending` 表示远端 review 已接受请求但尚未执行，只记录结果和挂起说明的字节数，不记录命令正文。
+
+审批事件以 `approval_id` 作为 `subject_id`，以 Harness call ID 作为 `correlation_id`。事件只记录审批状态、决定、revision、Core session ID、过期时间和关联可信度，不记录审批正文、命令、Token 或其他凭据。`unknown` 关联只保留在工具调用事件中，不会被审批协调器登记。
+
+`approval.execution.observed` 只表示只读查询获得了新的可信 Execution 快照，不表示审批决定被重新提交。`approval.reconciliation.failed` 只记录原因分类和错误字节数，不记录错误正文。
+
+附带执行结果时，事件额外记录 `execution_state`、开始/结束时间和 `execution_error_bytes`，不写入执行错误正文。
+
+确定性 Agent Session 会写入以下控制事件：
+
+- `agent.session.started`
+- `agent.tool.started`
+- `agent.tool.finished`
+- `agent.session.waiting_approval`
+- `agent.session.waiting_execution`
+- `agent.session.approval_observed`
+- `agent.tool.result_observed`
+- `agent.session.resumed`
+- `agent.session.resume_failed`
+- `agent.session.completed`
+- `agent.session.blocked`
+- `agent.session.failed`
+- `agent.session.cancelled`
+- `agent.session.expired`
+- `agent.session.outcome_unknown`
+
+Session 事件不记录工具参数或结果正文。它们记录 Session 状态、revision、Core Session 关联和工具状态，用于重建确定性执行轨迹。
+
+审批协调器通知 Session 失败时写入诊断事件 `approval.observer.failed`；该失败不改变已经确认的审批结果，但会使受影响的 Session 状态保持可诊断。
 
 ## 3. 有界保留
 

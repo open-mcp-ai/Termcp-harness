@@ -14,13 +14,18 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 - 已建立有界事件日志和 `/v1/events` 补拉 API；控制事件不淘汰，诊断事件截断水位可见。
 - 已建立 Core 实例识别与所有权绑定：读取 `/api/version` 和 `/api/daemon`，用端点、PID、启动时间和版本生成实例键；默认将现有 Core 标记为 external，受管绑定必须通过 PID + 启动时间校验；控制 API 和 Desktop 已展示身份快照。
 - 已建立受控工具调用流水线：服务器、工具和精确参数 allowlist，参数/结果大小上限，状态机转换和控制事件轨迹。成功、工具级失败、传输超时/断连后的结果未知已由本地测试覆盖；真实 Core `term` 的幂等覆盖写入、副作用成功/超时未知、Kali POSIX 上主动断开 MCP Host 后的 `unknown` 与不重试，以及 review 挂起、批准、拒绝、并发决定和断开后审批均已通过 opt-in 集成测试。`review_pending` 现在映射为 `approval_pending`，不再误记为成功。
+- 已建立审批关联与协调层：只有显式 `approval_id` 可形成 `trusted` 关联，缺失或冲突不会被猜测；协调器按 revision 串行提交决定，超时/断连收敛为 `unknown`，真实决定只走 Core 公开 HTTP 契约。审批快照可携带独立的结构化 `execution`，区分 shell `submitted`、非 shell `succeeded`、执行 `failed` 和结果 `unknown`，不会把批准等同于执行成功；等待中的执行结果通过有界只读查询收敛，不重放决定。`/v1/approvals` 以 `correlation_capability` 表示当前观察结果：未配置为 `unavailable`，尚未取得可信审批引用为 `unverified`，建立可信关联后为 `trusted`。决定入口默认关闭，需显式配置受限 Bearer token 文件，并拒绝浏览器 Origin。
+- 已建立确定性 Headless Agent Session 内核：显式步骤只能经过受控工具流水线执行，遇到审批挂起、阻断、失败、取消、过期或 `unknown` 会停止并保留明确状态；Step 支持 `accepted` / `completed` 完成级别，审批结构化结果会触发一次性自动消费，只有满足完成级别后才继续剩余步骤。批准本身不等同于工具执行成功，结果 `unknown` 不会自动重试。
+- 已建立首个受保护 Agent Session 纵向切片：JSON 工具策略按 Server、工具和精确参数 allowlist 编译；`serve --tool-policy-file` 装配真实 MCP Host 与工具流水线；Bearer 保护的 `POST /v1/agent/sessions`、`/run` 和 CLI `agent run` 可创建并运行显式步骤；Desktop 展示 Session、审批和结构化执行状态，并可在 Go 进程安全持有 token 时提交批准/拒绝。运行响应不回传工具正文。
+- 首个真实纵向实验已通过：本地 Core 开发构建 + Harness 临时二进制，固定只读 `term` 步骤完成，Session 为 `completed`，并各记录一条工具成功和 Session 完成事件。实验使用临时数据目录与随机端口，结束后按精确 PID 清理。
+- 真实审批闭环已通过：`term` 文件写入返回可信 `Approval-ID`，批准前文件不存在；批准后 Core 执行写入，Harness 自动消费 `execution=succeeded` 并完成 Session，审批、恢复、完成事件各一条。
 - 真实 Core 的调用取消已观测为本地 `unknown`，不能据此认定远端未执行；20,000 行输出和 12 路并发只读调用均通过，每个调用保留独立控制事件顺序。
 - 已建立 Wails + React/TypeScript Desktop Shell，展示真实 Harness Runtime、MCP Server 和事件时间线。
 - Desktop 默认简体中文，初始窗口 `1280×800`，采用深海军蓝与靛蓝信号色。
 - 控制 API 当前只允许绑定回环地址，详见 `docs/contracts/harness/v0.1/control-api.md`。
-- 工具调用状态机已通过 `internal/toolpipeline` 接入真实 MCP Host，当前仅支持显式 allowlist 下的同步调用；真实 Core 写测试只证明覆盖语义和 `unknown` 不自动重试，不证明 Core 支持 idempotency key。审批、Agent Loop 和 Session 尚未接入。语义见 `docs/contracts/harness/v0.1/state-machines.md`。
-- 已观测到 Core 0.2.8 两个审批契约偏差：没有 waiter 的过期请求仍可被批准并执行；session 关闭后 pending 请求不再出现在 `/api/approvals`，因此文档承诺的 `cancelled` 状态不可查询。安全路径仍拒绝执行，详见 `docs/contracts/core/v0.2.8/mcp.md`。
-- MCP 认证、自动重连、SSE/stdio 和受管子进程尚未实现；Agent Loop、Session、审批交互和非只读终端操作也尚未接入。控制 API 仍不提供任意工具调用桥接。
+- 工具调用状态机已通过 `internal/toolpipeline` 接入真实 MCP Host，当前仅支持显式 allowlist 下的同步调用；真实 Core 写测试只证明覆盖语义和 `unknown` 不自动重试，不证明 Core 支持 idempotency key。审批状态、受保护 CLI 决定、Session 结果观察和 Desktop 审批操作已接入；模型 Agent Loop 仍尚未接入。语义见 `docs/contracts/harness/v0.1/state-machines.md`。
+- Core 审批契约问题与上游同步状态统一记录在 `docs/contracts/core/v0.2.8/known-issues.md`；当前开发、集成和验收均以 Termcp 当前 `0.2.8` 版本基线的实际公开契约为准，不维护第二套 Harness 运行路径。
+- MCP 通用认证、自动重连和 SSE/stdio 尚未实现；模型 Agent Loop、持久化 Session 和非只读终端工作台尚未接入。受管 Core 已实现基础子进程启动与停止。控制 API 提供受保护的 Session 创建/运行和单项审批决定，不提供任意工具调用桥接；Desktop 可观察 Session 并提交审批决定。
 - 当前没有 CI；Desktop 尚未接入 `@xterm/xterm`、认证或安装包生成。
 - 本地工作区已初始化 Git，当前开发分支为 `dev`；`main` 未由本项目直接修改。
 - 产品定位已由 `docs/adr/ADR-011-mcp-native-agent-runtime.md` 确认。
@@ -41,7 +46,29 @@ go run ./cmd/termcp-harness mcp probe --endpoint http://127.0.0.1:18765/stream
 go run ./cmd/termcp-harness serve --mcp-endpoint http://127.0.0.1:18765/stream
 go run ./cmd/termcp-harness core identify --endpoint http://127.0.0.1:18765
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>'
+go run ./cmd/termcp-harness agent run --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --steps-file .\examples\agent-steps.readonly.json --token-file '<private-token-file>'
+go run ./cmd/termcp-harness approvals decide --runtime http://127.0.0.1:8787 --id '<approval-id>' --revision 1 --decision approve --token-file '<private-token-file>'
 ```
+
+Agent Session 工具策略不接受通配符，必须同时匹配 `server_id`、`tool_name` 和规范化后的完整参数对象：
+
+```json
+{
+  "rules": [
+    {
+      "server_id": "termcp-core",
+      "tool_name": "term",
+      "effect": "read_only",
+      "arguments": { "cmd": "" }
+    }
+  ]
+}
+```
+
+可直接使用 `examples/tool-policy.readonly.json` 与 `examples/agent-steps.readonly.json` 做只读冒烟测试。会话创建、运行和审批决定共用受限 `--approval-token-file` Bearer token；工具策略文件存在时该 token 为必填。
+
+Desktop 也通过 `--approval-token-file` 启用批准/拒绝按钮。token 仅保存在 Desktop 的 Go 进程内存，不进入前端、localStorage、事件、URL 或日志。
 
 Desktop 首次安装与构建：
 
@@ -57,7 +84,7 @@ wails build -m -nosyncgomod -nopackage -clean
 
 ```powershell
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787
-.\desktop\build\bin\termcp-harness-desktop.exe --runtime http://127.0.0.1:8787
+.\desktop\build\bin\termcp-harness-desktop.exe --runtime http://127.0.0.1:8787 --approval-token-file '<private-token-file>'
 ```
 
 运行单个测试：
@@ -168,11 +195,13 @@ Harness 提供固定的展示 Shell，并把所有功能模块放进同一份模
 - `docs/product/WEB-DEFERRED.md`：Web 暂停策略。
 - `docs/adr/ADR-011-mcp-native-agent-runtime.md`：产品定位与三平面架构。
 - `docs/adr/ADR-012-runtime-bootstrap-technology.md`：Go Runtime bootstrap 与待验证边界。
+- `docs/adr/ADR-013-harness-canvas-layout.md`：Harness Canvas 初版布局与 Workspace 模板。
 - `docs/adr/ADR-009-modular-composition.md`：模块目录、推荐安装与自由组合。
 - `docs/contracts/README.md`：Core 与 Harness 公开契约的追踪规则。
 - `docs/contracts/harness/v0.1/control-api.md`：当前本地控制 API 草案与明确边界。
 - `docs/contracts/harness/v0.1/core-instance.md`：Core 实例身份、所有权和重启检测。
 - `docs/contracts/harness/v0.1/state-machines.md`：工具调用、审批和自动重试状态语义。
+- `docs/contracts/harness/v0.1/agent-session.md`：确定性 Agent Session 状态、事件和当前边界。
 - `docs/contracts/harness/v0.1/mcp-server-states.md`：MCP Server 登记、连接、能力和启用状态。
 - `docs/contracts/harness/v0.1/event-log.md`：本地事件顺序、有界保留、截断和补拉语义。
 - `docs/contracts/harness/v0.1/desktop-shell.md`：Desktop 桥接、端点限制和当前界面边界。
@@ -194,5 +223,6 @@ Core 是执行权威与契约上游；Desktop 是成熟的人类终端工作台�
 2. 支持 MCP HTTP 认证的凭据引用，并保持日志、状态和诊断脱敏。
 3. 完成 SSE/stdio 传输与受管 Core 子进程实例所有权边界。
 4. 接入 Core 终端 Session、`@xterm/xterm` 和保序 WebSocket 字节流。
-5. 把审批与工具状态机接入真实派发链路并接入 Desktop。
-6. 完成安装包、日志导出、跨平台和性能基线。
+5. 完善审批时间线、`waiting_execution` 恢复交互和人工接管体验。
+6. 在现有 Session 创建/运行 API 上接入模型 Adapter 和上下文投影。
+7. 完成安装包、日志导出、跨平台和性能基线。

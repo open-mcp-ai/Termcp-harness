@@ -7,7 +7,8 @@
 ## 工作区现状（先确认，别假设）
 
 - 已有 Go 1.27 Headless Runtime 与 Wails Desktop：`cmd/termcp-harness`、`internal/runtime`、`internal/controlapi`、`internal/daemon`、`internal/coreinstance`、`internal/toolcall`、`internal/toolpipeline`、`internal/approval`、`internal/mcpcontrol`、`internal/eventlog`、`internal/controlclient` 和 `desktop/`。当前仍**没有 CI**；Git 已初始化，开发分支为 `dev`。
-- 当前已实现 Runtime 实例生命周期、本地控制 API、有界事件日志、Core 实例识别与受管所有权校验、工具调用/审批状态机、持久 MCP Host、`tools/list_changed` 失效、Streamable HTTP 探测器和 Desktop 只读工作台；Core 身份通过 `/api/version` + `/api/daemon` 识别，使用端点、PID、启动时间和版本生成实例键，区分 external/managed/unverified 并检测重启。受控工具流水线已通过精确 allowlist、参数/结果上限、状态机和事件轨迹接入真实 Core 0.2.8；只读 `term`、幂等覆盖写入、副作用成功/超时未知、MCP Host 断开、调用取消、输出洪峰、12 路并发控制轨迹，以及 review pending/批准/拒绝/并发决定均有真实集成测试。`review_pending` 映射为 `approval_pending`，不会误记为成功；取消只保证本地 `unknown`，不保证远端停止。**Core 0.2.8 的审批过期和 session 关闭后取消状态存在已记录偏差，MCP 认证/自动重连、Agent Loop、受管 Core 子进程启动、终端 Session 工具执行和完整审批集成尚未实现**。
+- 当前已实现 Runtime 实例生命周期、本地控制 API、有界事件日志、Core 实例识别与受管所有权校验、工具调用/审批状态机、持久 MCP Host、`tools/list_changed` 失效、Streamable HTTP 探测器和 Desktop Session/审批工作台；Core 身份通过 `/api/version` + `/api/daemon` 识别，使用端点、PID、启动时间和版本生成实例键，区分 external/managed/unverified 并检测重启。受控工具流水线已通过精确 allowlist、参数/结果上限、状态机和事件轨迹接入真实 Core 0.2.8；只读 `term`、幂等覆盖写入、副作用成功/超时未知、MCP Host 断开、调用取消、输出洪峰、12 路并发控制轨迹，以及 review pending/批准/拒绝/并发决定均有真实集成测试。`review_pending` 映射为 `approval_pending`，不会误记为成功；取消只保证本地 `unknown`，不保证远端停止。**Core 0.2.8 当前开发基线的审批过期和 session 关闭后取消状态已完成本地修复与严格契约验证，发布同步状态见 known-issues；MCP 认证/自动重连、Agent Loop、终端 Session 工具执行和持久化恢复尚未实现**。
+- 已实现受保护的确定性 Agent Session 创建/运行 API、CLI `agent run`、精确 JSON allowlist 工具策略、Step 完成级别、审批结果自动消费，以及 Desktop Session/审批面板与 token 内存隔离的批准/拒绝操作；运行响应只暴露调用状态与结果字节数。当前仍没有模型 Agent Loop、持久化 Session 或进程重启恢复。
 - 这是**独立工作区**，不与旧实现合并；旧代码只作参考（见下节）。
 - 引入技术栈时，把真实可执行命令（含跑单个测试的写法）补进本文件与 README，否则后续 Agent 只能猜。
 - Core 相关开发、测试和汇报前必须检查 `docs/contracts/core/v0.2.8/known-issues.md`；未关闭问题不得写成已通过，汇报时使用醒目的 `CORE 上游问题` 警告块。
@@ -29,6 +30,10 @@ go run ./cmd/termcp-harness mcp probe --endpoint http://127.0.0.1:18765/stream
 go run ./cmd/termcp-harness serve --mcp-endpoint http://127.0.0.1:18765/stream
 go run ./cmd/termcp-harness core identify --endpoint http://127.0.0.1:18765
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765 --approval-token-file '<private-token-file>'
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>'
+go run ./cmd/termcp-harness agent run --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --steps-file .\examples\agent-steps.readonly.json --token-file '<private-token-file>'
+go run ./cmd/termcp-harness approvals decide --runtime http://127.0.0.1:8787 --id '<approval-id>' --revision 1 --decision approve --token-file '<private-token-file>'
 ```
 
 Desktop 安装、检查、构建与启动：
@@ -39,7 +44,7 @@ npm ci
 npm run check
 Set-Location ..
 wails build -m -nosyncgomod -nopackage -clean
-.\build\bin\termcp-harness-desktop.exe --runtime http://127.0.0.1:8787
+.\build\bin\termcp-harness-desktop.exe --runtime http://127.0.0.1:8787 --approval-token-file '<private-token-file>'
 ```
 
 Desktop 前端检查单条命令：
@@ -91,7 +96,11 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreConcurrentControlTraceInteg
 # 测试结束后关闭并删除专用 session；测试只清理自己写入的临时文件。
 ```
 
-若 Agent 沙盒拒绝访问默认 Go 缓存，可把 `GOCACHE` 和 `GOTMPDIR` 指向任务临时目录后重跑；不要修改全局 Go 配置。控制 API 当前没有认证，只能绑定回环地址，不能通过 `0.0.0.0` 或局域网 IP 暴露。
+若 Agent 沙盒拒绝访问默认 Go 缓存，可把 `GOCACHE` 和 `GOTMPDIR` 指向任务临时目录后重跑；不要修改全局 Go 配置。除受 Bearer token 保护的审批决定与 Agent Session 创建/运行端点外，控制 API 当前没有认证，只能绑定回环地址，不能通过 `0.0.0.0` 或局域网 IP 暴露。
+
+审批决定和 Agent Session 创建/运行入口默认关闭；仅在显式提供受限 `--approval-token-file` 时启用这组写控制。Token 不得写入命令参数、普通日志、事件、URL、前端持久化或诊断输出；POSIX 下 token 文件不得允许 group/other 访问。
+
+Desktop 的审批 token 只从受限文件读入 Go 进程内存；前端只能调用固定批准/拒绝绑定，不得获得 token 值或获得通用 HTTP 桥。
 
 ## 同机相关仓库（参考，不在本工作区内）
 
@@ -125,10 +134,11 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreConcurrentControlTraceInteg
 - `docs/adr/ADR-010-core-integration-boundary.md` — **Proposed**：Harness 消费独立 Core 进程、公开契约和实例所有权边界。
 - `docs/adr/ADR-011-mcp-native-agent-runtime.md` — **Accepted**：Harness 作为 MCP 原生 Agent Runtime 与终端工作台的产品定位。
 - `docs/adr/ADR-012-runtime-bootstrap-technology.md` — **Proposed / bootstrap 已实现**：Go 1.27 作为 Runtime 起始技术选择；不等于长期进程模型、依赖或跨平台已经确认。
+- `docs/adr/ADR-013-harness-canvas-layout.md` — **Accepted / 实现待落地**：Harness Canvas 初版布局、Workspace 模板与模块面板约束。
 - `docs/development/BRANCHING.md` — 上游分支观察与 Harness 的 trunk-based 分支策略。
 - `docs/contracts/README.md` — Core 与 Harness 公开契约、来源、版本和验证记录规范。
 - `docs/contracts/harness/v0.1/core-instance.md` — Core 身份、external/managed/unverified 所有权、实例键和重启检测。
-- `docs/contracts/harness/v0.1/state-machines.md` — 工具调用、审批、结果未知与自动重试语义；工具调用已接入受控 MCP 流水线，审批尚未接入。
+- `docs/contracts/harness/v0.1/state-machines.md` — 工具调用、审批、结果未知与自动重试语义；受控 MCP 流水线、审批协调、Core 结构化执行结果解析与 Session 结果恢复内核已接入。
 - `docs/contracts/harness/v0.1/mcp-server-states.md` — MCP Server 的登记、连接、能力、启用和所有权状态边界。
 - `docs/contracts/harness/v0.1/event-log.md` — 本地事件顺序、有界保留、截断和补拉 API。
 - `docs/contracts/harness/v0.1/desktop-shell.md` — Desktop Wails 桥接、端点限制、视觉边界和未实现能力。

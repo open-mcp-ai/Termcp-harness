@@ -1,15 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { desktopAvailable, loadBootstrap, windowAction } from "./api";
-import { coreOwnershipLabel, coreStateLabel, mcpFailureLabel, mcpStateLabel, messages } from "./i18n";
+import {
+  approvalControlAvailable,
+  decideApproval,
+  desktopAvailable,
+  loadBootstrap,
+  windowAction,
+} from "./api";
+import {
+  agentStateLabel,
+  coreOwnershipLabel,
+  coreStateLabel,
+  executionStateLabel,
+  mcpFailureLabel,
+  mcpStateLabel,
+  messages,
+} from "./i18n";
 import type { Bootstrap, HarnessEvent, RuntimeState } from "./types";
 
 type Filter = "all" | "control" | "diagnostic";
 
 const stateCopy: Record<RuntimeState, string> = messages.state;
 
-function Icon({ name }: { name: "ledger" | "core" | "runtime" | "mcp" | "refresh" | "min" | "max" | "close" }) {
+function Icon({ name }: { name: "ledger" | "agent" | "core" | "runtime" | "mcp" | "refresh" | "min" | "max" | "close" }) {
   const paths = {
     ledger: <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />,
+    agent: <path d="M8 4h8v4H8zM5 8h14v12H5zM8 12h3v3H8zM13 12h3v3h-3zM9 18h6" />,
     core: <path d="M12 3 4 7v10l8 4 8-4V7zM4 7l8 4 8-4M12 11v10" />,
     runtime: <path d="M7 4h10l3 3v10l-3 3H7l-3-3V7zM8 8h8v8H8z" />,
     mcp: <path d="M6 7h5v5H6zM13 12h5v5h-5zM11 9h2v5h-2z" />,
@@ -341,12 +356,165 @@ function MCPInspector({ data, stale }: { data: Bootstrap; stale: boolean }) {
   );
 }
 
+function AgentInspector({
+  data,
+  stale,
+  canDecide,
+  onChanged,
+}: {
+  data: Bootstrap;
+  stale: boolean;
+  canDecide: boolean;
+  onChanged: () => Promise<void>;
+}) {
+  const sessions = data.agent_sessions.sessions;
+  const approvals = data.approvals.approvals;
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<{ message: string; detail?: string } | null>(null);
+  const approvalCapabilityNotice =
+    data.approvals.correlation_capability === "unverified"
+      ? messages.agent.approvalCapabilityUnverified
+      : null;
+
+  const submitDecision = async (id: string, revision: number, decision: "approve" | "reject") => {
+    setDeciding(id);
+    setDecisionError(null);
+    try {
+      const result = await decideApproval(id, revision, decision);
+      if (result.outcome === "unknown") {
+        setDecisionError({ message: messages.agent.decisionUnknown });
+      } else if (result.warning) {
+        setDecisionError({ message: messages.agent.decisionWarning, detail: result.warning });
+      }
+      await onChanged();
+    } catch (reason) {
+      setDecisionError({
+        message: messages.agent.decisionFailed,
+        detail: reason instanceof Error ? reason.message : String(reason),
+      });
+    } finally {
+      setDeciding(null);
+    }
+  };
+
+  return (
+    <section className={`inspector-section ${stale ? "is-stale" : ""}`} id="agent" aria-labelledby="agent-title">
+      <header className="inspector-heading">
+        <div>
+          <p className="context-line">{stale ? messages.agent.contextStale : messages.agent.context}</p>
+          <h2 id="agent-title">{messages.agent.title}</h2>
+        </div>
+        <span className={`count-badge ${stale ? "stale" : ""}`}>{sessions.length}</span>
+      </header>
+      {stale ? <div className="snapshot-notice">{messages.agent.lastKnownNote}</div> : null}
+      {!data.agent_sessions.configured ? (
+        <div className="compact-empty">
+          <strong>{messages.agent.empty}</strong>
+          <p>{messages.agent.emptyBody}</p>
+        </div>
+      ) : sessions.length === 0 ? (
+        <div className="compact-empty">
+          <strong>{messages.agent.empty}</strong>
+          <p>{messages.agent.emptyBody}</p>
+        </div>
+      ) : (
+        <ul className="server-list">
+          {sessions.map((session) => (
+            <li key={session.id}>
+              <div className="server-title">
+                <strong title={session.id}>{shortID(session.id)}</strong>
+                <span className={stale ? "unknown" : session.state === "completed" ? "ready" : "not-ready"}>
+                  {stale ? messages.common.unknown : agentStateLabel(session.state)}
+                </span>
+              </div>
+              <div className="server-facts">
+                {session.current_call_id ? <span>{messages.agent.call}: {shortID(session.current_call_id)}</span> : null}
+                {session.current_approval_status ? <span>{messages.agent.approval}: {session.current_approval_status}</span> : null}
+                {session.current_tool_status ? <span>{messages.agent.tool}: {session.current_tool_status}</span> : null}
+                {session.current_completion ? <span>{messages.agent.completion}: {session.current_completion}</span> : null}
+                {session.current_execution ? (
+                  <span>{messages.agent.execution}: {executionStateLabel(session.current_execution.state)}</span>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="agent-approvals">
+        <strong>{messages.agent.approvals}</strong>
+        {approvalCapabilityNotice ? (
+          <p className="agent-capability-warning">{approvalCapabilityNotice}</p>
+        ) : null}
+        {!canDecide ? <p className="quiet">{messages.agent.approvalDisabled}</p> : null}
+        {decisionError ? (
+          <>
+            <p className="agent-decision-error" role="alert">{decisionError.message}</p>
+            {decisionError.detail ? (
+              <details className="agent-decision-details">
+                <summary>{messages.app.technicalDetails}</summary>
+                <pre>{decisionError.detail}</pre>
+              </details>
+            ) : null}
+          </>
+        ) : null}
+        {approvals.length === 0 ? (
+          <p className="quiet">{messages.agent.approvalsEmpty}</p>
+        ) : (
+          <ul className="server-list">
+            {approvals.map((approval) => (
+              <li key={approval.request.id}>
+                <div className="server-title">
+                  <strong title={approval.request.id}>{shortID(approval.request.id)}</strong>
+                  <span className="not-ready">{approval.request.status}</span>
+                </div>
+                <div className="server-facts">
+                  <span>{messages.agent.call}: {shortID(approval.request.call_id)}</span>
+                  {approval.request.execution ? (
+                    <span>{messages.agent.execution}: {executionStateLabel(approval.request.execution.state)}</span>
+                  ) : null}
+                </div>
+                <p className="agent-approval-summary">
+                  {approval.reference.summary?.trim() || messages.agent.noSummary}
+                </p>
+                {canDecide && approval.request.status === "pending" && !approval.reference.summary?.trim() ? (
+                  <p className="agent-decision-error" role="alert">{messages.agent.noSummary}</p>
+                ) : null}
+                {canDecide && approval.request.status === "pending" && approval.reference.summary?.trim() ? (
+                  <div className="agent-approval-actions">
+                    <button
+                      type="button"
+                      className="approval-approve"
+                      disabled={deciding !== null}
+                      onClick={() => void submitDecision(approval.request.id, approval.request.revision, "approve")}
+                    >
+                      {deciding === approval.request.id ? messages.agent.deciding : messages.agent.approve}
+                    </button>
+                    <button
+                      type="button"
+                      className="approval-reject"
+                      disabled={deciding !== null}
+                      onClick={() => void submitDecision(approval.request.id, approval.request.revision, "reject")}
+                    >
+                      {messages.agent.reject}
+                    </button>
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function App() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [approvalControl, setApprovalControl] = useState(false);
   const inFlight = useRef(false);
 
   const refresh = async () => {
@@ -373,6 +541,13 @@ function App() {
     void refresh();
     const interval = window.setInterval(() => void refresh(), 2500);
     return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!desktopAvailable()) return;
+    void approvalControlAvailable()
+      .then(setApprovalControl)
+      .catch(() => setApprovalControl(false));
   }, []);
 
   const stale = Boolean(error && data);
@@ -402,6 +577,9 @@ function App() {
           </a>
           <a href="#runtime" className="rail-link" aria-label={messages.nav.runtime} title={messages.nav.runtime}>
             <Icon name="runtime" />
+          </a>
+          <a href="#agent" className="rail-link" aria-label={messages.nav.agent} title={messages.nav.agent}>
+            <Icon name="agent" />
           </a>
           <a href="#core" className="rail-link" aria-label={messages.nav.core} title={messages.nav.core}>
             <Icon name="core" />
@@ -464,6 +642,12 @@ function App() {
         <aside className="inspector no-drag" aria-label={messages.app.runtimeDetails}>
           {data ? (
             <>
+              <AgentInspector
+                data={data}
+                stale={stale}
+                canDecide={approvalControl && !stale}
+                onChanged={refresh}
+              />
               <CoreInspector data={data} stale={stale} />
               <RuntimeInspector data={data} stale={stale} />
               <MCPInspector data={data} stale={stale} />

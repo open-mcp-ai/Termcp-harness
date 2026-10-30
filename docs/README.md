@@ -30,6 +30,7 @@ docs/
 │   │   └── known-issues.md
 │   └── harness/v0.1/
 │       ├── control-api.md
+│       ├── agent-session.md
 │       ├── core-instance.md
 │       ├── desktop-shell.md
 │       ├── event-log.md
@@ -47,7 +48,8 @@ docs/
     ├── ADR-009-modular-composition.md
     ├── ADR-010-core-integration-boundary.md
     ├── ADR-011-mcp-native-agent-runtime.md
-    └── ADR-012-runtime-bootstrap-technology.md
+    ├── ADR-012-runtime-bootstrap-technology.md
+    └── ADR-013-harness-canvas-layout.md
 ```
 
 ## 阅读顺序
@@ -58,17 +60,19 @@ docs/
 4. `docs/architecture/UPSTREAM.md`
 5. `docs/architecture/DESIGN_v0.4.md`
 6. `docs/adr/ADR-009-modular-composition.md`（模块安装与自由组合）
-7. `docs/ux/UX-RECOVERY.md`
-8. 相关 ADR
-9. `docs/development/BRANCHING.md`
-10. `docs/contracts/README.md`
-11. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
-12. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
-13. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
-14. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
-15. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
-16. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
-17. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
+7. `docs/adr/ADR-013-harness-canvas-layout.md`（Canvas 初版布局）
+8. `docs/ux/UX-RECOVERY.md`
+9. 相关 ADR
+10. `docs/development/BRANCHING.md`
+11. `docs/contracts/README.md`
+12. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
+13. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
+14. `docs/contracts/harness/v0.1/agent-session.md`（确定性 Agent Session 状态与当前边界）
+15. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
+16. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
+17. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
+18. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
+19. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
 
 ## 文档职责
 

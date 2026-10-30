@@ -87,7 +87,7 @@ Harness 已通过 MCP `CallTool` 调用 `term` 且传入空 `cmd`，收到非空
 - 2026-10-29 通过 Core 的 `kali-gc` 专用 session，在远程 Kali 的 `/tmp` 下重复同一组 POSIX 写入、副作用和 750ms 超时测试，结果与本机一致。远端只读 `ip -4 addr show` 当时显示 `192.168.1.6/24`，未显示 `192.168.174.129`。
 - 2026-10-29 在 Kali 副作用执行期间主动关闭调用侧 MCP Host，工具流水线收敛为 `unknown`；随后使用第二个 MCP Host 和 Kali session 读回文件，sentinel 仍只有一份，且只记录一条 `tool.call.outcome_unknown`。这验证了客户端传输断开后的不重试路径，不等同于远程网络分区或 Core 进程故障。
 
-## 真实 review / approval 观测
+## 历史 review / approval 观测（2026-10-29）
 
 2026-10-29 通过 Kali POSIX 专用 session、MCP 工具流水线和公开 HTTP API 验证：
 
@@ -98,12 +98,34 @@ Harness 已通过 MCP `CallTool` 调用 `term` 且传入空 `cmd`，收到非空
 - 单个请求并发提交批准和拒绝时，实测一个返回 `200`、另一个返回 `409`，最终状态和文件存在性一致。
 - session 关闭后批准 pending 请求返回 `404` 或 `409`，文件不会创建，安全结果正确；但请求会从 `/api/approvals` 消失，文档承诺的 `cancelled` 状态不可查询。
 - 设置 `timeout_seconds=1` 后等待 2 秒，请求在列表中仍为 `pending`；此时批准返回 `200` 并实际执行写入。公开文档声称过期 fail-closed，但当前实现的列举和决定路径没有在无 waiter 时结算过期，这是已确认的契约偏差。
-- 审批请求没有 operation/correlation ID，因此 Harness 事件只能关联本地 call ID，不能声称与远端审批记录或后续执行形成可信因果链。
+- 审批请求没有 operation/correlation ID，因此 Harness 事件只能关联本地 call ID，不能声称与远端审批记录或后续执行形成可信因果链。该缺口已登记为 `CORE-0.2.8-003`，上游 issue #236。
 - 对执行中的 `term run` 取消本地调用上下文后，流水线收敛为 `unknown`；远端命令继续运行并完成了一次 sentinel 写入。取消不是远端终止保证，也不能据此认定命令未执行。
 - 生成 20,000 行输出并提高返回窗口后，调用正常收敛为 `succeeded`。12 路并发只读 `term` 调用均成功，每个 call ID 都保留 `proposed → ready → dispatching → succeeded` 的控制事件顺序。
 
+## 当前 Termcp 0.2.8 审批执行契约
+
+Termcp 当前 0.2.8 开发基线为审批决定响应和 `GET /api/approvals` 中的 `request` 提供可选 `execution`：
+
+```json
+{
+  "state": "submitted|succeeded|failed|running|unknown",
+  "started_at": 1790129915403,
+  "finished_at": 1790129916410,
+  "error": "optional"
+}
+```
+
+- shell 输入成功写为 `submitted`，不表示命令完成或退出码成功。
+- 文件操作与端口转发成功写为 `succeeded`。
+- 执行失败写为 `failed`，审批状态仍为 `approved`；HTTP 执行失败响应为 `409` JSON。
+- 审批决定响应丢失时，Harness 形成本地 `unknown`，不能据此断言执行未发生。
+- session 或审批队列在执行中关闭时，Core 把仍在 `running` 的执行收敛为 `unknown`，不删除已批准事实。
+- `GET /api/approvals/{id}` 是只读恢复入口；Harness 可在同一决定上下文中查询一次，绝不据此重发决定或副作用。
+- 通过 `term` 外层命令进入审批时，`TERM/1 202 Accepted` 状态头包含 `Approval-ID`、`Session-ID` 和 `Expires-At`，供 MCP Host 建立可信关联。
+
 ## 尚未验证
 
+- Termcp 每次更新后仍需重新执行真实 Core 审批执行 E2E，确认结构化字段与状态语义没有回归。
 - 真实网络断连（区别于上下文超时和 session close）时，远端是否已经执行。
 - 更强的远端取消/终止能力及服务端确认语义；当前观测只证明本地取消后远端可能继续。
 - review 请求在 Core 重启后的最终状态与恢复方式。

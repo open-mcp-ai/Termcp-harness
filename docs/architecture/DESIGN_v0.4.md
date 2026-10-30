@@ -98,7 +98,7 @@ Terminal Workspace 不是：
 - 唯一控制入口。
 - 完整 SSH 管理器的自动复制品。
 
-当前已建立 Wails + React/TypeScript Desktop Shell，只读取 Runtime、Core 身份、MCP 注册和事件窗口；终端流、审批操作和安装包尚未接入。Core 面板展示 external/managed/unverified 所有权、PID、启动时间和实例键，详见 `docs/contracts/harness/v0.1/core-instance.md` 与 `docs/contracts/harness/v0.1/desktop-shell.md`。
+当前已建立 Wails + React/TypeScript Desktop Shell，可读取 Runtime、Agent Session、审批、Core 身份、MCP 注册和事件窗口，并可在 token 仅驻留 Go 内存时提交审批决定；终端流和安装包尚未接入。Core 面板展示 external/managed/unverified 所有权、PID、启动时间和实例键，详见 `docs/contracts/harness/v0.1/core-instance.md` 与 `docs/contracts/harness/v0.1/desktop-shell.md`。
 
 Harness 当前通过 `/api/version` 和 `/api/daemon` 识别 Core，以端点、PID、启动时间和版本生成实例键。端点可达不等于取得进程所有权；受管绑定必须与 Harness 启动时记录的 PID 和启动时间匹配。端口、PID 或版本中的单项都不能作为长期身份。
 
@@ -259,7 +259,7 @@ Termcp Core 是其中一个 MCP Server，不是唯一的工具来源。Harness �
 
 这些状态是否可被可信确认，最终取决于 Core/MCP 契约。客户端和 Runtime 不得用自己的本地状态伪造服务端终态。
 
-当前本地状态机已通过 `internal/toolpipeline` 接入 MCP Host，支持显式 Server/工具/精确参数 allowlist、参数与结果上限、控制事件轨迹和同步调用收敛。成功、工具级失败、传输结果未知、真实 Core 的幂等覆盖写入、副作用超时未知和调用侧 MCP Host 断开后的 `unknown` 已由测试覆盖。调用取消同样只形成本地 `unknown`，远端命令可能继续；20,000 行输出和 12 路并发只读调用已通过真实 Core 测试。远端 `review_pending` 现已映射为 `approval_pending`，真实 Core 的批准、拒绝、并发决定和断开后审批已实测；审批决定管理、等待和恢复尚未接入 Runtime。Core 0.2.8 的过期批准与 session 关闭后取消状态可见性存在已记录偏差。该测试不证明远端 idempotency key、真实网络分区或可信未执行查询。`accepted`、`running`、Agent Loop 和后续恢复仍未接入，不得由本地时间伪造。边界见 `docs/contracts/harness/v0.1/state-machines.md`。
+当前本地状态机已通过 `internal/toolpipeline` 接入 MCP Host，支持显式 Server/工具/精确参数 allowlist、参数与结果上限、控制事件轨迹和同步调用收敛。成功、工具级失败、传输结果未知、真实 Core 的幂等覆盖写入、副作用超时未知和调用侧 MCP Host 断开后的 `unknown` 已由测试覆盖。调用取消同样只形成本地 `unknown`，远端命令可能继续；20,000 行输出和 12 路并发只读调用已通过真实 Core 测试。远端 `review_pending` 现已映射为 `approval_pending`，审批决定、结构化执行结果、Step 完成级别和后续步骤自动恢复已接入 Runtime。当前 Termcp 0.2.8 开发基线已完成审批过期和 session 关闭后取消状态修复及严格契约验证，后续 Termcp 迭代继续沿用同一测试链。该测试不证明远端 idempotency key、真实网络分区或可信未执行查询。Agent Loop、持久化 Session 和跨重启恢复仍未接入，不得由本地时间或终端文本伪造。边界见 `docs/contracts/harness/v0.1/state-machines.md`。
 
 ### 6.3 重试规则
 
@@ -347,6 +347,18 @@ Harness 的策略不能替代 Core 的服务端权限。UI 点击、按钮禁用
 - 性能优化基于测量，不因“高级架构”引入无证据的复杂引擎。
 
 ## 9. Terminal Workspace
+
+### 9.0 Harness Canvas 初版
+
+Terminal Workspace 的初版界面方向采用 `docs/adr/ADR-013-harness-canvas-layout.md` 定义的 Harness Canvas：
+
+- Shell 保持轻量，提供 Workspace、模块、命令、状态和恢复入口。
+- Canvas 使用受约束的停靠式自由布局。
+- 工作台、审批中心和任务时间线是 Workspace 模板，不是割裂的固定页面。
+- Activity 统一入口并保留实时事件、历史记录和诊断视图。
+- 面板、模块和任务生命周期必须分开。
+
+该布局目前是 **Accepted / 实现待落地**，不得写成已经完成。
 
 ### 9.1 共享执行现场
 

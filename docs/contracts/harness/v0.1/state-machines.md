@@ -1,8 +1,8 @@
 # Harness 工具调用与审批状态机 v1（草案）
 
-> 状态：代码与本地测试已覆盖；工具调用已通过 `internal/toolpipeline` 接入 MCP，远端 `review_pending` 已映射为 `approval_pending`，审批决定和恢复尚未接入 Runtime；未承诺公开兼容性。
+> 状态：代码与本地测试已覆盖；工具调用已通过 `internal/toolpipeline` 接入 MCP，远端 `review_pending` 已映射为 `approval_pending`，并支持 trusted/unknown/conflict 审批关联；安全审批决定、Core 结构化执行结果解析、Step 完成级别、自动消费和后续步骤恢复已接入 Runtime；未承诺公开兼容性。
 >
-> 日期：2026-10-28
+> 日期：2026-10-30
 >
 > 实现：`internal/toolcall`、`internal/toolpipeline`、`internal/approval`
 >
@@ -84,9 +84,42 @@ pending
 - 点击或提交“拒绝”后，状态只能是 `submitting`，决定为 `reject`。
 - 只有收到可信服务端确认后，才能显示 `rejected`。
 - 审批请求提交后超时或断连，状态是 `unknown`，不是失败，也不是已拒绝。
-- 待处理审批的本地过期与已提交审批的远端过期必须区分。
+- 决定响应不明确时，Runtime 可在同一上下文内执行一次只读 Core 审批查询来恢复结果；不得重新提交批准或拒绝请求。
+- `expires_at` 只作为远端提供的截止时间元数据。v1 不以本地时钟把远端 `pending` 自动改写为 `expired`；`expired` 终态必须来自可信远端观察。
 - 最终确认必须与已提交的决定一致；矛盾结果进入错误路径，不能静默改写。
 - 审批终态不能再转换。
+
+## 4.2 执行结果
+
+审批确认和执行业务结果必须分开建模。Core 在同意执行后返回独立 `execution`：
+
+- `running`：执行已开始，尚无终态结果。
+- `submitted`：shell 输入字节已写入；不表示命令完成，也不表示退出码成功。
+- `succeeded`：文件操作或端口转发执行完成。
+- `failed`：执行器报告失败；审批仍保持 `approved`，且不保证部分副作用不存在。
+- `unknown`：丢失响应或无法信任执行观察，不得改写为成功或失败。
+
+Harness 只把显式 `execution` 与该审批关联；不能从终端文本、时间或相邻事件推断。`submitted` / `succeeded` 仍需进入 Session 的可信结果消费路径后才能继续后续步骤。
+
+自动消费由审批协调器触发，只领取一次。Step 的 `required_completion=accepted` 可由 `submitted` 或 `succeeded` 满足；`completed` 只由 `succeeded` 满足。`unknown` 保持等待，恢复失败写诊断事件且不记录错误正文。审批确认后，协调器可用有界的只读 `Lookup` 收敛迟到执行证据；不得重放批准/拒绝请求。`running`、`submitted`、`unknown` 不等于成功，执行状态必须单调推进。
+
+## 4.1 审批关联
+
+`approval_pending` 只说明远端已接受 review，不说明 Harness 已知道具体审批请求。关联状态必须单独表示：
+
+- `trusted`：`review_pending` 结果显式提供合法 `approval_id`；可附带 `session_id` 和 `expires_at`。
+- `unknown`：结果确认 pending，但没有可信 `approval_id`；不得根据 session、文本、时间或相邻事件推断。
+- `conflict`：多个结果来源给出互相矛盾的 ID、session 或过期时间，或字段类型/格式非法；不得自行选择其中一个。
+
+强制规则：
+
+- `approval_id`、`session_id` 只接受非空、无空白和控制字符、长度不超过 128 的值。
+- `expires_at` 接受 Unix milliseconds 或 RFC3339；非法值形成 `conflict`。
+- 结构化 `structuredContent` 和 JSON 文本可提供关联字段；TERM 文本兼容路径若没有可信状态头，只能是 `unknown`。
+- Core `term` 外层 `202` 文本可提供 `Approval-ID`、`Session-ID`、`Expires-At` 状态头；字段合法且不冲突时形成 `trusted` 关联。
+- 关联状态不会改变 `approval_pending` 的安全含义：无论是否存在 ID，远端执行都尚未被 Harness 确认为成功。
+- 未关联的 pending 请求不能被 Harness 批准或拒绝；必须先建立可信关联或等待人工在 Core 侧处理。
+
 
 ## 5. 当前 MCP 接入范围
 
@@ -99,6 +132,11 @@ pending
 - 工具参数和结果正文不写入普通事件日志；事件只记录调用 ID、来源、工具名、副作用类别、状态、revision、策略原因和结果字节数等元数据。
 - opt-in 真实 Core 测试已覆盖 `idempotent_write` 的重复覆盖最终状态，以及 `side_effect` 成功、上下文超时和调用侧 MCP Host 断开后的 `unknown` 与“无自动重试”。断开测试不等同于远程网络分区。该测试不证明 Core 提供 idempotency key、operation ID 或可信的未执行查询。
 - Core 的 `TERM/1 202 Accepted` + `Submitted for review:` 或结构化 `review_pending=true, approved=false` 会收敛为 `approval_pending`，不会记为 `succeeded`。该映射只证明本地不伪造执行成功，不代表 Runtime 已能管理审批决定。
+- 当前 Termcp 0.2.8 开发基线在 review 结果中提供 `approval_id`，并可附带 `session_id` 和 `expires_at`。Harness 只使用显式字段；字段缺失或冲突时保持关联未知，不使用版本号推断能力。
+- `internal/approval` 的协调器只登记 `trusted` 关联，按 revision 串行提交决定，并在远端超时、断连或矛盾结果时收敛为 `unknown`；收到可信远端终态后才进入 `approved`、`rejected`、`expired` 或 `cancelled`。
+- `internal/coreapproval` 只通过 Core 公开 HTTP 契约调用 `/api/approvals/{id}/approve|reject`，解析决定响应中的结构化 `execution`，不读取 Core 内部数据；错误响应不会把凭据或审批正文写入普通日志。
+- Control API 暴露只读 `/v1/approvals` 快照；受保护的 `POST /v1/approvals/{id}/decision` 仅在显式配置 Bearer token 文件时启用，要求 JSON、revision CAS，并拒绝带 `Origin` 的请求。
+- 决定提交返回 `unknown` 时使用 HTTP `202`，不得把它显示为已批准、已拒绝或明确失败。
 - opt-in 真实 Core 测试已覆盖 review 挂起不执行、提交侧 MCP Host 断开后请求仍可批准、拒绝不执行、批准后执行、并发批准/拒绝首个决定生效，以及 session 关闭后批准被拒绝且不产生文件。
 - 已观测到 Core 0.2.8 的审批契约偏差：没有 waiter 的过期请求仍可被批准并执行；session 关闭后 pending 请求从 `/api/approvals` 消失，`cancelled` 状态不可查询。安全结果仍为拒绝执行，但状态可见性不符合公开文档。
 - 调用上下文取消只形成本地 `unknown`；真实 Core 的远端命令可能继续执行并完成副作用。取消不得被解释为远端已停止或未执行。
@@ -108,7 +146,7 @@ pending
 
 - 多客户端高并发审批原子性和压力下的首个决定保证；当前只有一次并发批准/拒绝实测。
 - MCP Server 是否声明副作用、幂等、去重或操作查询能力。
-- Core/MCP 事件是否提供可信 operation/correlation ID。
+- Termcp 后续迭代是否继续稳定提供可信 operation/correlation ID 和 `review_pending` 关联字段；变更时必须同步契约并重跑真实集成测试。
 - 审批请求在 Core 重启后的恢复行为，以及过期/取消状态修复后的可见性。
 - 重试预算和退避与 Agent/Session 总预算的关系。
 

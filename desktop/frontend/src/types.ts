@@ -2,6 +2,51 @@ export type RuntimeState = "new" | "running" | "stopping" | "stopped" | "failed"
 export type EventClass = "control" | "diagnostic";
 export type CoreIdentityState = "identified" | "unavailable" | "conflict";
 export type CoreOwnership = "external" | "managed" | "unverified";
+export type ApprovalCorrelation = "unknown" | "trusted" | "conflict";
+export type ApprovalCorrelationCapability =
+  | "unavailable"
+  | "unverified"
+  | "trusted";
+export type ApprovalStatus =
+  | "pending"
+  | "submitting"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "cancelled"
+  | "unknown";
+export type ApprovalDecision = "none" | "approve" | "reject";
+export type ApprovalExecutionState =
+  | "running"
+  | "submitted"
+  | "succeeded"
+  | "failed"
+  | "unknown";
+export type ToolCallStatus =
+  | "proposed"
+  | "blocked"
+  | "approval_pending"
+  | "ready"
+  | "dispatched"
+  | "accepted"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "expired"
+  | "unknown";
+export type ToolCompletionRequirement = "accepted" | "completed";
+export type AgentSessionState =
+  | "new"
+  | "running"
+  | "waiting_approval"
+  | "waiting_execution"
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "cancelled"
+  | "expired"
+  | "unknown";
 
 export interface Health {
   status: string;
@@ -91,6 +136,72 @@ export interface CoreState {
   core?: CoreIdentity;
 }
 
+export interface TrackedApproval {
+  request: {
+    id: string;
+    call_id: string;
+    status: ApprovalStatus;
+    decision: ApprovalDecision;
+    revision: number;
+    execution?: ApprovalExecution;
+  };
+  reference: {
+    correlation: ApprovalCorrelation;
+    approval_id?: string;
+    session_id?: string;
+    expires_at?: string;
+    summary?: string;
+  };
+}
+
+export interface ApprovalExecution {
+  state: ApprovalExecutionState;
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+}
+
+export interface ApprovalsState {
+  configured: boolean;
+  correlation_capability: ApprovalCorrelationCapability;
+  total: number;
+  approvals: TrackedApproval[];
+}
+
+export interface ApprovalDecisionResult {
+  approval: {
+    id: string;
+    call_id: string;
+    status: ApprovalStatus;
+    decision: ApprovalDecision;
+    revision: number;
+    execution?: ApprovalExecution;
+  };
+  outcome: "confirmed" | "unknown";
+  warning?: string;
+}
+
+export interface AgentSessionSnapshot {
+  id: string;
+  core_session_id?: string;
+  state: AgentSessionState;
+  revision: number;
+  current_call_id?: string;
+  current_approval_id?: string;
+  current_approval_status?: ApprovalStatus;
+  current_tool_status?: ToolCallStatus;
+  current_execution?: ApprovalExecution;
+  current_completion?: ToolCompletionRequirement;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export interface AgentSessionsState {
+  configured: boolean;
+  total: number;
+  sessions: AgentSessionSnapshot[];
+}
+
 export interface Bootstrap {
   endpoint: string;
   health: Health;
@@ -98,12 +209,16 @@ export interface Bootstrap {
   events: EventWindow;
   mcp: MCPState;
   core: CoreState;
+  approvals: ApprovalsState;
+  agent_sessions: AgentSessionsState;
 }
 
 export interface DesktopBridge {
   Bootstrap(): Promise<Bootstrap>;
   Events(after: number, limit: number): Promise<EventWindow>;
   RuntimeEndpoint(): Promise<string>;
+  ApprovalControlAvailable(): Promise<boolean>;
+  DecideApproval(id: string, revision: number, decision: "approve" | "reject"): Promise<ApprovalDecisionResult>;
   WindowMinimise(): Promise<void>;
   WindowToggleMaximise(): Promise<void>;
   WindowClose(): Promise<void>;

@@ -1,12 +1,12 @@
 # Terminal Workspace Shell v0.1（草案）
 
-> 状态：Wails 桌面壳、真实 Harness Runtime 读取和本机窗口验证已完成；终端交互与实时订阅尚未实现。
+> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察和审批决定已实现；Harness Canvas 初版布局已确认但尚未实现；终端交互与实时订阅尚未实现。
 >
 > 实现：`desktop/`
 
 ## 1. 边界
 
-Desktop 是 Terminal Workspace 的第一个 Shell，不是 Harness Runtime 本体。它通过固定路径的只读控制客户端读取 Headless Harness Runtime，不直接启动 Agent Loop、不持有 MCP 会话，也不把 UI 状态当作安全保证。
+Desktop 是 Terminal Workspace 的第一个 Shell，不是 Harness Runtime 本体。它通过固定路径的控制客户端读取 Headless Harness Runtime，并可在显式配置受限 token 文件后提交审批决定；不直接启动 Agent Loop、不持有 MCP 会话，也不把 UI 状态当作安全保证。
 
 关闭 Desktop 不会关闭 Harness Runtime。Harness Runtime 当前需由用户单独启动。
 
@@ -32,6 +32,8 @@ React/TypeScript/Vite 使用 `package-lock.json` 固定实际依赖。`@xterm/xt
 | `Bootstrap()` | 读取 Health、Harness Runtime 快照、最新事件窗口、Core 身份和 MCP Server 列表 |
 | `Events(after, limit)` | 按 Harness 本地序号补拉事件 |
 | `RuntimeEndpoint()` | 返回当前回环 Harness Runtime 地址 |
+| `ApprovalControlAvailable()` | 报告 Go 进程是否已安全载入审批 token |
+| `DecideApproval(id, revision, decision)` | 提交一次批准或拒绝，不向前端返回 token |
 | `WindowMinimise()` | 最小化窗口 |
 | `WindowToggleMaximise()` | 最大化或还原窗口 |
 | `WindowClose()` | 关闭窗口 |
@@ -48,6 +50,8 @@ http://127.0.0.1:8787
 
 可用 `--runtime <loopback-url>` 或 `TERMCP_HARNESS_CONTROL` 覆盖。
 
+审批决定仅在显式提供 `--approval-token-file <path>` 或 `TERMCP_HARNESS_APPROVAL_TOKEN_FILE` 时启用。Desktop 启动时读取 token 并只保存在 Go 进程内存；不写入前端、localStorage、事件、URL 或普通日志，关闭时清空引用。
+
 控制客户端只接受：
 
 - `http`；
@@ -60,7 +64,8 @@ http://127.0.0.1:8787
 
 - 左侧固定 Rail：事件时间线、Harness Runtime、Termcp Core、MCP Server。
 - 中间事件带：本地 sequence、时间、类型、subject/correlation、class 筛选和可展开载荷。
-- 右侧事实检查器：Harness Runtime 生命周期、Core 端点/所有权/PID/启动时间/实例键，以及 MCP 登记/连接/能力/启用状态。
+- 右侧事实检查器：Agent Session、关联审批及摘要、Harness Runtime 生命周期、Core 身份和 MCP 状态。
+- 待处理审批在可信摘要存在且 token 已加载时提供“批准/拒绝”；提交期间禁用按钮，结果未知明确要求不要重复操作。
 - 不可达时顶部状态为“状态未知”，Harness Runtime、Core、MCP 和事件流统一标记为“最后快照”。
 - 保留快照中的“运行中”“就绪”只作为最后已知值，并附带过期说明，不作为当前状态。
 - 首次启动即不可达时显示明确空态，不再保留“正在读取”加载提示。
@@ -81,5 +86,5 @@ http://127.0.0.1:8787
 - Core 子进程自动启动、停止和 managed 所有权创建。
 - Desktop 认证、远程 Harness Runtime、TLS 和凭据引用。
 - MCP 连接配置、能力变更通知和持久会话。
-- 审批决定、工具时间线和结果未知恢复交互。
+- 工具时间线和结果未知恢复交互。
 - 安装包、签名、升级、日志导出和跨平台回归。

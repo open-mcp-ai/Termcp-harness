@@ -2,11 +2,14 @@ package controlapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/agentsession"
+	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
@@ -210,6 +213,175 @@ func TestCoreEndpointReportsUnconfigured(t *testing.T) {
 	if body.Configured || body.Core != nil {
 		t.Fatalf("core response = %+v", body)
 	}
+}
+
+func TestApprovalEndpointListsCoordinatedState(t *testing.T) {
+	handler := NewHandler(runningRuntime(t), WithApprovals(fakeApprovalLister{
+		approvals: []approval.Tracked{{
+			Request: approval.Snapshot{
+				ID: "approval-1", CallID: "call-1", Status: approval.StatusPending,
+				Decision: approval.DecisionNone, Revision: 1,
+			},
+			Reference: approval.Reference{
+				Correlation: approval.CorrelationTrusted,
+				ID:          "approval-1",
+				SessionID:   "session-1",
+			},
+		}},
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/approvals", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var body approvalsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body.Configured || body.Total != 1 || len(body.Approvals) != 1 {
+		t.Fatalf("response = %+v", body)
+	}
+	if body.CorrelationCapability != approval.CorrelationCapabilityUnverified {
+		t.Fatalf("correlation capability = %q, want unverified", body.CorrelationCapability)
+	}
+	if body.Approvals[0].Request.ID != "approval-1" ||
+		body.Approvals[0].Reference.Correlation != approval.CorrelationTrusted {
+		t.Fatalf("approval = %+v", body.Approvals[0])
+	}
+}
+
+func TestApprovalEndpointReportsUnavailable(t *testing.T) {
+	handler := NewHandler(runningRuntime(t), WithApprovals(fakeApprovalLister{err: errors.New("query failed")}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/approvals", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.Code)
+	}
+}
+
+func TestApprovalEndpointReportsUnconfigured(t *testing.T) {
+	response := httptest.NewRecorder()
+	NewHandler(runningRuntime(t)).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/approvals", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var body approvalsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Configured || body.Total != 0 || body.Approvals == nil ||
+		body.CorrelationCapability != approval.CorrelationCapabilityUnavailable {
+		t.Fatalf("response = %+v", body)
+	}
+}
+
+func TestApprovalEndpointDoesNotInferCapabilityFromVersion(t *testing.T) {
+	handler := NewHandler(
+		runningRuntime(t),
+		WithApprovals(fakeApprovalLister{}),
+		WithCore(fakeCoreReader{
+			configured: true,
+			current: coreinstance.Snapshot{
+				Version:     "0.2.8",
+				InstanceKey: "core-instance",
+			},
+		}),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/approvals", nil))
+	var body approvalsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.CorrelationCapability != approval.CorrelationCapabilityUnverified {
+		t.Fatalf("correlation capability = %q, want unverified", body.CorrelationCapability)
+	}
+}
+
+func TestApprovalEndpointReportsTrustedCorrelation(t *testing.T) {
+	handler := NewHandler(
+		runningRuntime(t),
+		WithApprovals(fakeCapableApprovalLister{trusted: true}),
+		WithCore(fakeCoreReader{
+			configured: true,
+			current: coreinstance.Snapshot{
+				Version:     "0.2.8",
+				InstanceKey: "core-instance",
+			},
+		}),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/approvals", nil))
+	var body approvalsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.CorrelationCapability != approval.CorrelationCapabilityTrusted {
+		t.Fatalf("correlation capability = %q, want trusted", body.CorrelationCapability)
+	}
+}
+
+func TestAgentSessionsEndpointListsSnapshots(t *testing.T) {
+	handler := NewHandler(runningRuntime(t), WithAgentSessions(fakeSessionLister{sessions: []agentsession.Snapshot{{
+		ID:            "agent-session-1",
+		CoreSessionID: "core-session-1",
+		State:         agentsession.StateWaitingApproval,
+		Revision:      4,
+		CurrentCallID: "call-1",
+	}}}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/agent/sessions", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var body agentSessionsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body.Configured || body.Total != 1 || body.Sessions[0].State != agentsession.StateWaitingApproval {
+		t.Fatalf("response = %+v", body)
+	}
+}
+
+func TestAgentSessionsEndpointReportsUnconfigured(t *testing.T) {
+	response := httptest.NewRecorder()
+	NewHandler(runningRuntime(t)).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/agent/sessions", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var body agentSessionsResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Configured || body.Total != 0 || body.Sessions == nil {
+		t.Fatalf("response = %+v", body)
+	}
+}
+
+type fakeApprovalLister struct {
+	approvals []approval.Tracked
+	err       error
+}
+
+type fakeCapableApprovalLister struct {
+	fakeApprovalLister
+	trusted bool
+}
+
+func (f fakeCapableApprovalLister) TrustedCorrelationObserved() bool {
+	return f.trusted
+}
+
+func (f fakeApprovalLister) List() ([]approval.Tracked, error) {
+	return f.approvals, f.err
+}
+
+type fakeSessionLister struct {
+	sessions []agentsession.Snapshot
+}
+
+func (f fakeSessionLister) List() []agentsession.Snapshot {
+	return f.sessions
 }
 
 type fakeCoreReader struct {

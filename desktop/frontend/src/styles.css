@@ -1029,6 +1029,89 @@ h1 {
   background: #edf1f9;
 }
 
+.agent-approvals {
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-approvals > strong {
+  font-size: 11px;
+}
+
+.agent-approvals .server-list {
+  margin-top: 9px;
+}
+
+.agent-approval-summary {
+  margin: 9px 0 0 !important;
+  overflow: visible !important;
+  color: var(--ink) !important;
+  font-family: inherit !important;
+  font-size: 10px !important;
+  line-height: 1.45;
+  text-overflow: clip !important;
+  white-space: normal !important;
+}
+
+.agent-approval-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.agent-approval-actions button {
+  padding: 6px 10px;
+  color: var(--ink);
+  font-size: 10px;
+  background: #fff;
+  border: 1px solid var(--line-dark);
+  border-radius: 3px;
+}
+
+.agent-approval-actions .approval-approve {
+  color: #fff;
+  background: var(--signal);
+  border-color: var(--signal);
+}
+
+.agent-approval-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.agent-decision-error {
+  margin: 9px 0 0;
+  color: #9e3434;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.agent-decision-details {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.agent-decision-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.agent-decision-details pre {
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-capability-warning {
+  margin: 7px 0 0;
+  color: #9a6527;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .inspector-placeholder {
   display: grid;
   flex: 1;

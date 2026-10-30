@@ -1,4 +1,4 @@
-import type { Bootstrap, DesktopBridge, EventWindow } from "./types";
+import type { ApprovalDecisionResult, Bootstrap, DesktopBridge, EventWindow } from "./types";
 
 function bridge(): DesktopBridge {
   const app = window.go?.main?.App;
@@ -18,6 +18,18 @@ export async function loadBootstrap(): Promise<Bootstrap> {
 
 export async function loadEvents(after: number, limit = 200): Promise<EventWindow> {
   return bridge().Events(after, limit);
+}
+
+export async function approvalControlAvailable(): Promise<boolean> {
+  return bridge().ApprovalControlAvailable();
+}
+
+export async function decideApproval(
+  id: string,
+  revision: number,
+  decision: "approve" | "reject",
+): Promise<ApprovalDecisionResult> {
+  return bridge().DecideApproval(id, revision, decision);
 }
 
 export async function windowAction(action: "minimise" | "maximise" | "close"): Promise<void> {

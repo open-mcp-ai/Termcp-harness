@@ -1,6 +1,6 @@
 # Core v0.2.8 已知上游问题
 
-> 状态：本地修复已验证（2026-10-30）
+> 状态：当前 Termcp 0.2.8 开发基线已验证（2026-10-30）
 >
 > 适用：Core v0.2.8、Harness 通过公开 MCP/HTTP 契约的集成验证
 >
@@ -22,14 +22,14 @@
 ## 2. 来源与边界
 
 - Core 版本：`v0.2.8`
-- 已安装 Core commit：`0595cb5`
+- 历史确认 Core commit：`0595cb5`
 - 验证日期：2026-10-29
 - 验证方式：运行中的本机 Core、Kali POSIX session、MCP Streamable HTTP、公开 HTTP API
-- 本地修复分支：`fix/approval-lifecycle`
-- 本地修复提交：`f6cefec`
+- 当前开发分支：`fix/approval-lifecycle`
+- 当前开发提交：`f6cefec`
 - 本地验证（2026-10-30）：`go test -race ./internal/approval ./internal/session ./internal/webui -count=1` 通过
-- 上游 PR #226 仅作为发布同步记录，不作为本地验收阻塞条件
-- Harness E2E（2026-10-30）：在独立端口启动本地修复构建，剩余 7 个 opt-in 测试全部通过
+- 上游 PR #226 已采纳；当前 Termcp 开发基线包含审批关联契约
+- Harness E2E（2026-10-30）：在独立端口启动当前 Termcp 开发基线，剩余 7 个 opt-in 测试全部通过
 - Harness 未 import Core 内部包，未修改 Core 仓库，未直接读写 Core 私有数据库或配置。
 
 ## 3. 未关闭问题
@@ -76,6 +76,32 @@
   - 对已取消请求批准返回冲突且不执行。
   - `TestTermcpCoreApprovalSessionDeathStateContract` 通过。
 
+### CORE-0.2.8-003：review_pending 缺少 approval_id
+
+- 状态：**UPSTREAM_ACCEPTED（PR #226 已采纳；当前 Termcp 开发基线已包含关联契约，后续随 Termcp 发布流程同步）**
+- 严重度：**高，阻塞工具调用与审批请求的可信关联**
+- 首次确认：2026-10-30
+- 上游 issue：<https://github.com/open-mcp-ai/Termcp/issues/236>
+- 本地补丁分支：`fix/approval-correlation`（基于 `fix/approval-lifecycle`）
+- 公开契约缺口：`review_pending` 只返回 `ok`、`approved`、`review_pending`、`message`，没有稳定 `approval_id`。
+- 实际影响：Harness 能看到 `/api/approvals` 中存在 pending 请求，但无法证明它对应哪一次 MCP 工具调用；禁止用文本、时间或相邻事件推断。
+- Harness 应对：只接受显式合法 `approval_id`；缺失或冲突时保持 `approval_correlation=unknown`，不登记到审批协调器，也不开放决定入口。控制 API 仅按实际观察返回 `unverified` 或 `trusted`，不按版本号分叉运行路径。
+- 本地修复：
+  - 已排队的 shell command、file 和 forward operation 返回 `approval_id`、`session_id` 和 `expires_at`。
+  - 仅 staged、尚未被 ending key 提交的文本不返回 `approval_id`。
+  - 保留禁止 poll/resubmit/reword/retry 的规则。
+- 本地验证：
+  - `go test -race ./internal/mcp -run '^(TestHandleSendInputHoldsUnderReview|TestHandlePressKeyCommitsStagedText|TestHeldOperationReturnsApprovalCorrelation|TestFileWriteIsHeldAndExecutedOnApproval|TestGatedToolsAllHoldUnderReview|TestInstructionsCarryReviewPendingRule|TestReviewPendingRepliesStateTheNextStep)$' -count=1`
+  - `go test ./... -run '^$' -count=1`
+  - `go vet ./internal/mcp`
+  - `go build ./...`
+- 未完成验证：当前 Windows 环境完整 `go test ./internal/mcp -short` 因缺少 `sh`/`cat`、符号链接权限及测试超时而失败；这些失败不涉及本次审批关联测试。
+- 责任方：Core 上游。
+- 关闭条件：
+  - 上述关联字段进入公开 MCP 契约。
+  - 真实 Core 的 `review_pending` 与 approval queue ID 一致。
+  - Harness 真实集成测试可从工具结果直接取得 trusted `approval_id`。
+
 ## 4. 新问题登记模板
 
 新增 Core 上游问题时，至少记录：
@@ -110,14 +136,13 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalSessionDeathStateCo
 
 当前预期：
 
-- 对已安装 Core v0.2.8（`0595cb5`），以上两个测试仍失败；它们不是普通回归失败，而是已发布基线的可执行证据。
-- 对本地修复提交 `f6cefec`，Core 的 approval/session/webui race 测试已通过。
-- Harness 的两项严格契约测试已针对本地修复构建独立复跑并通过。
-- 上游 PR 状态不阻塞本地闭环；本地修复构建已经满足上述两项 Harness 严格契约。
+- 当前 Termcp 0.2.8 开发基线：Core 的 approval/session/webui race 测试及 Harness 两项严格契约测试均通过。
+- 历史提交 `0595cb5` 的失败结果保留为问题来源证据，不作为当前开发目标。
+- 每次 Termcp 迭代后都应在同一 `0.2.8` 版本数字基线上重跑这些严格契约测试，版本升级由 Termcp 发布流程统一决定。
 
 ## 6. 本地 E2E 验收记录（2026-10-30）
 
-- 本地 Core：`fix/approval-lifecycle` / `f6cefec`，构建版本 `dev`
+- Termcp：`fix/approval-lifecycle` / `f6cefec`，版本标记仍为 `0.2.8` 开发基线
 - 运行方式：独立端口 `127.0.0.1:18766`、临时数据目录、一次性 Kali `kali-gc` effect/observer sessions
 - Core 测试：`go test -race ./internal/approval ./internal/session ./internal/webui -count=1` 通过
 - Harness 标准回归：`go test -race ./... -count=1`、`go vet ./...`、`go build ./...`、`npm run check` 通过
@@ -130,7 +155,7 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalSessionDeathStateCo
   - `TestTermcpCorePOSIXWriteEffectsIntegration`
   - `TestTermcpCorePOSIXTransportDisconnectIntegration`
 - 清理结果：临时 Core 已停止，running session 为 0，临时数据目录已删除
-- 边界：以上证明本地修复构建与 Harness 闭环；不把该结论自动扩展到尚未包含修复的上游发布版本
+- 边界：以上证明当前 Termcp 0.2.8 开发基线与 Harness 闭环；后续 Termcp 更新必须重新跑同一组 E2E。
 
 ## 7. 非本清单事项
 

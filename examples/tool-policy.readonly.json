@@ -1,0 +1,13 @@
+{
+  "rules": [
+    {
+      "server_id": "termcp-core",
+      "tool_name": "term",
+      "effect": "read_only",
+      "arguments": {
+        "cmd": ""
+      },
+      "reason": "Read the Core term guide as a fixed Agent Session smoke test"
+    }
+  ]
+}

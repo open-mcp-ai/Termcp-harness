@@ -52,11 +52,12 @@ var (
 )
 
 type Snapshot struct {
-	ID       string   `json:"id"`
-	CallID   string   `json:"call_id"`
-	Status   Status   `json:"status"`
-	Decision Decision `json:"decision"`
-	Revision Revision `json:"revision"`
+	ID        string     `json:"id"`
+	CallID    string     `json:"call_id"`
+	Status    Status     `json:"status"`
+	Decision  Decision   `json:"decision"`
+	Revision  Revision   `json:"revision"`
+	Execution *Execution `json:"execution,omitempty"`
 }
 
 type Request struct {
@@ -140,7 +141,31 @@ func (r *Request) Apply(expected Revision, event Event) (Snapshot, error) {
 func (r *Request) Snapshot() Snapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.snapshot
+	snapshot := r.snapshot
+	snapshot.Execution = cloneExecution(snapshot.Execution)
+	return snapshot
+}
+
+// SetExecution attaches authoritative execution metadata without changing the
+// approval decision revision. Approval and execution are separate state domains.
+func (r *Request) SetExecution(execution *Execution) (Snapshot, error) {
+	normalized, err := normalizeExecution(execution)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.snapshot.Status != StatusApproved {
+		return cloneRequestSnapshot(r.snapshot), fmt.Errorf(
+			"approval execution requires approved state, got %s",
+			r.snapshot.Status,
+		)
+	}
+	if err := ValidateExecutionTransition(r.snapshot.Execution, normalized); err != nil {
+		return cloneRequestSnapshot(r.snapshot), err
+	}
+	r.snapshot.Execution = normalized
+	return cloneRequestSnapshot(r.snapshot), nil
 }
 
 func (s Status) IsTerminal() bool {
@@ -150,4 +175,9 @@ func (s Status) IsTerminal() bool {
 	default:
 		return false
 	}
+}
+
+func cloneRequestSnapshot(snapshot Snapshot) Snapshot {
+	snapshot.Execution = cloneExecution(snapshot.Execution)
+	return snapshot
 }

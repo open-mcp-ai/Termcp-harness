@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
+	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -22,6 +24,11 @@ func main() {
 		defaultEndpoint = "http://127.0.0.1:8787"
 	}
 	endpoint := flag.String("runtime", defaultEndpoint, "loopback Harness Runtime control endpoint")
+	approvalTokenFile := flag.String(
+		"approval-token-file",
+		os.Getenv("TERMCP_HARNESS_APPROVAL_TOKEN_FILE"),
+		"optional file containing the bearer token for approval decisions",
+	)
 	flag.Parse()
 
 	client, err := controlclient.New(*endpoint)
@@ -29,7 +36,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "termcp-harness-desktop:", err)
 		os.Exit(1)
 	}
-	app := newApp(client)
+	approvalToken := ""
+	if strings.TrimSpace(*approvalTokenFile) != "" {
+		approvalToken, err = tokenfile.Read(*approvalTokenFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "termcp-harness-desktop:", err)
+			os.Exit(1)
+		}
+	}
+	app := newApp(client, approvalToken)
 
 	err = wails.Run(&options.App{
 		Title:       "Termcp Harness",
