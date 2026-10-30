@@ -25,7 +25,7 @@ func TestProbeInitializesAndLoadsTools(t *testing.T) {
 			InputSchema: mcp.ToolInputSchema{Type: "object", Properties: map[string]any{}},
 		}}},
 	}
-	prober := &Prober{factory: func(string) (clientConnection, error) { return fake, nil }}
+	prober := &Prober{factory: func(string, string) (clientConnection, error) { return fake, nil }}
 
 	observation, err := prober.Probe(context.Background(), ProbeOptions{Endpoint: "http://127.0.0.1:18765/stream"})
 	if err != nil {
@@ -74,7 +74,7 @@ func TestProbeRejectsDuplicateAndOversizedTools(t *testing.T) {
 				},
 				toolsResult: &mcp.ListToolsResult{Tools: tt.tools},
 			}
-			prober := &Prober{factory: func(string) (clientConnection, error) { return fake, nil }}
+			prober := &Prober{factory: func(string, string) (clientConnection, error) { return fake, nil }}
 			_, err := prober.Probe(context.Background(), ProbeOptions{
 				Endpoint:       "http://127.0.0.1:18765/stream",
 				MaxSchemaBytes: tt.maximum,
@@ -87,7 +87,7 @@ func TestProbeRejectsDuplicateAndOversizedTools(t *testing.T) {
 }
 
 func TestProbeRequiresLoopbackEndpoint(t *testing.T) {
-	prober := &Prober{factory: func(string) (clientConnection, error) {
+	prober := &Prober{factory: func(string, string) (clientConnection, error) {
 		return nil, errors.New("factory must not be called")
 	}}
 	if _, err := prober.Probe(context.Background(), ProbeOptions{Endpoint: "https://example.com/mcp"}); err == nil {
@@ -137,6 +137,10 @@ func (f *fakeProbeClient) Initialize(context.Context, mcp.InitializeRequest) (*m
 
 func (f *fakeProbeClient) ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {
 	return f.toolsResult, nil
+}
+
+func (f *fakeProbeClient) CallTool(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return mcp.NewToolResultText("unused"), nil
 }
 
 func (f *fakeProbeClient) OnNotification(func(mcp.JSONRPCNotification)) {}

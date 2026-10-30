@@ -70,6 +70,7 @@ const (
 	EvidenceDispatchContext        Evidence = "validated_dispatch_context"
 	EvidenceServerAccepted         Evidence = "server_accepted"
 	EvidenceExecutionProgress      Evidence = "execution_progress"
+	EvidenceRemoteApprovalRequired Evidence = "remote_approval_required"
 	EvidenceTrustedResult          Evidence = "trusted_result"
 	EvidenceTrustedFailure         Evidence = "trusted_failure"
 	EvidenceLocalCancellation      Evidence = "local_cancellation"
@@ -139,6 +140,7 @@ var transitions = map[transitionKey]transition{
 
 	{StatusDispatched, EventAccept}:          {to: StatusAccepted, evidence: EvidenceServerAccepted},
 	{StatusDispatched, EventStart}:           {to: StatusRunning, evidence: EvidenceExecutionProgress},
+	{StatusDispatched, EventRequireApproval}: {to: StatusApprovalPending, evidence: EvidenceRemoteApprovalRequired},
 	{StatusDispatched, EventSucceed}:         {to: StatusSucceeded, evidence: EvidenceTrustedResult},
 	{StatusDispatched, EventFail}:            {to: StatusFailed, evidence: EvidenceTrustedFailure},
 	{StatusDispatched, EventCancelConfirmed}: {to: StatusCancelled, evidence: EvidenceTrustedCancellation},

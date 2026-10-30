@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -34,6 +35,7 @@ type Observation struct {
 
 type ProbeOptions struct {
 	Endpoint       string
+	AuthToken      string
 	ClientName     string
 	ClientVersion  string
 	Timeout        time.Duration
@@ -45,11 +47,12 @@ type clientConnection interface {
 	Start(context.Context) error
 	Initialize(context.Context, mcp.InitializeRequest) (*mcp.InitializeResult, error)
 	ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
+	CallTool(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	OnNotification(func(mcp.JSONRPCNotification))
 	Close() error
 }
 
-type clientFactory func(string) (clientConnection, error)
+type clientFactory func(string, string) (clientConnection, error)
 
 type Prober struct {
 	factory clientFactory
@@ -59,8 +62,14 @@ func NewProber() *Prober {
 	return &Prober{factory: defaultClientFactory}
 }
 
-func defaultClientFactory(endpoint string) (clientConnection, error) {
-	return client.NewStreamableHttpClient(endpoint)
+func defaultClientFactory(endpoint, authToken string) (clientConnection, error) {
+	var options []transport.StreamableHTTPCOption
+	if authToken != "" {
+		options = append(options, transport.WithHTTPHeaders(map[string]string{
+			"Authorization": "Bearer " + authToken,
+		}))
+	}
+	return client.NewStreamableHttpClient(endpoint, options...)
 }
 
 func (p *Prober) Probe(ctx context.Context, options ProbeOptions) (Observation, error) {
@@ -90,7 +99,7 @@ func (p *Prober) Probe(ctx context.Context, options ProbeOptions) (Observation, 
 	probeContext, cancel := context.WithTimeout(ctx, options.Timeout)
 	defer cancel()
 
-	mcpClient, err := p.factory(endpoint)
+	mcpClient, err := p.factory(endpoint, options.AuthToken)
 	if err != nil {
 		return Observation{}, fmt.Errorf("create MCP client: %w", err)
 	}
