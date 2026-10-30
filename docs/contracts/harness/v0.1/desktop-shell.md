@@ -1,6 +1,6 @@
 # Terminal Workspace Shell v0.1（草案）
 
-> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察和审批决定已实现；Harness Canvas 初版布局已确认但尚未实现；终端交互与实时订阅尚未实现。
+> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察和审批决定已实现；Harness Canvas 初版 PoC 已实现；标签合并、真实终端交互和实时订阅尚未实现。
 >
 > 实现：`desktop/`
 
