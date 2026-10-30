@@ -1,0 +1,50 @@
+# Termcp Core v0.2.8 契约元数据
+
+> 状态：已对运行中的本地 release 做只读核验（2026-10-28）。
+>
+> 不等同于完整行为兼容性认证。
+
+## 来源
+
+- 本地启动器：`D:\software\fnm\aliases\default\termcp.ps1`
+- npm package：`@open-mcp-ai/termcp`
+- `termcp --version`：`termcp v0.2.8 (commit 0595cb5) built 2026-10-26T15:58:14Z`
+- 运行端点：`http://127.0.0.1:18765`
+- 官方仓库：<https://github.com/open-mcp-ai/Termcp>
+- 官方 `main` 基线：`0595cb5c9ce2181de3f8049b06dc4c0ef0c2a6db`
+
+本机源码目录 `D:\data\code\github\Termcp-web` 停在 `34a1cb5`，没有对应 v0.2.8 tag，因此**不能**作为本次契约证据。本文证据来自已安装 release 的版本输出、运行时端点和实例自报文档。
+
+## 已核验实例信息
+
+`GET /api/version`：
+
+```json
+{"version":"v0.2.8"}
+```
+
+`GET /api/daemon` 的已核验字段：
+
+```json
+{
+  "daemon": true,
+  "idle_timeout_ms": 30000,
+  "pid": 12092,
+  "started_at": "2026-10-28T00:11:23Z",
+  "version": "v0.2.8"
+}
+```
+
+PID 和启动时间是这次观测值，不是稳定契约字段。
+
+## 实例自报文档
+
+- `GET /api.md`：HTTP 200，UTF-8 Markdown，是当前实例公开的传输/API 参考。
+- `GET /openapi.json`：HTTP 404，本版本未公开该路径。
+- `GET /skills.md`：HTTP 404；不能依据旧文档假设该入口存在。
+
+## 认证与暴露
+
+本次实例绑定回环地址且未启用 HTTP authentication。Harness v1 MCP 注册表同样只允许回环 HTTP/HTTPS endpoint，且拒绝 URL userinfo、query 和 fragment，避免把凭据放进 URL。
+
+远程或带认证 Core 接入尚未实现。
