@@ -75,6 +75,8 @@ type Spec struct {
 	Name       string
 	Endpoint   string
 	Management ManagementState
+	// AuthToken is retained only by the live host and never exposed in snapshots.
+	AuthToken string
 }
 
 type Capabilities struct {

@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
@@ -162,6 +164,65 @@ func TestMCPServersEndpointSeparatesRegistrationFromReadiness(t *testing.T) {
 	if len(body.Servers) != 1 || body.Servers[0].Registration != mcpcontrol.RegistrationDiscovered {
 		t.Fatalf("MCP servers = %+v", body.Servers)
 	}
+}
+
+func TestCoreEndpointReturnsIdentityAndOwnership(t *testing.T) {
+	startedAt := time.Date(2026, 10, 28, 13, 28, 8, 0, time.UTC)
+	reader := fakeCoreReader{
+		configured: true,
+		current: coreinstance.Snapshot{
+			Endpoint:          "http://127.0.0.1:18765",
+			State:             coreinstance.StateIdentified,
+			Ownership:         coreinstance.OwnershipExternal,
+			Version:           "v0.2.8",
+			PID:               14560,
+			StartedAt:         &startedAt,
+			InstanceKey:       "instance-key",
+			ObservedAt:        startedAt.Add(time.Minute),
+			Revision:          1,
+			OwnershipVerified: false,
+		},
+	}
+	response := httptest.NewRecorder()
+	NewHandler(runningRuntime(t), WithCore(reader)).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/core", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", response.Code)
+	}
+	var body coreResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode core response: %v", err)
+	}
+	if !body.Configured || body.Core == nil || body.Core.PID != 14560 || body.Core.Ownership != coreinstance.OwnershipExternal {
+		t.Fatalf("core response = %+v", body)
+	}
+}
+
+func TestCoreEndpointReportsUnconfigured(t *testing.T) {
+	response := httptest.NewRecorder()
+	NewHandler(runningRuntime(t)).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/core", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want 200", response.Code)
+	}
+	var body coreResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode core response: %v", err)
+	}
+	if body.Configured || body.Core != nil {
+		t.Fatalf("core response = %+v", body)
+	}
+}
+
+type fakeCoreReader struct {
+	configured bool
+	current    coreinstance.Snapshot
+}
+
+func (f fakeCoreReader) Configured() bool {
+	return f.configured
+}
+
+func (f fakeCoreReader) Snapshot() (coreinstance.Snapshot, bool) {
+	return f.current, f.current.InstanceKey != ""
 }
 
 func runningRuntime(t *testing.T) *runtime.Runtime {

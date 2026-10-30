@@ -24,6 +24,20 @@ func TestBootstrapReadsOnlyFixedControlEndpoints(t *testing.T) {
 			writeTestJSON(w, http.StatusOK, map[string]any{"events": []any{}, "latest_sequence": 0})
 		case "/v1/mcp/servers":
 			writeTestJSON(w, http.StatusOK, map[string]any{"servers": []any{}, "total": 0, "control_plane_configured": true})
+		case "/v1/core":
+			writeTestJSON(w, http.StatusOK, map[string]any{
+				"configured": true,
+				"core": map[string]any{
+					"endpoint":     "http://127.0.0.1:18765",
+					"state":        "identified",
+					"ownership":    "external",
+					"version":      "v0.2.8",
+					"pid":          14560,
+					"instance_key": "instance-key",
+					"observed_at":  "2026-10-29T01:00:00Z",
+					"revision":     1,
+				},
+			})
 		default:
 			http.NotFound(w, request)
 		}
@@ -38,7 +52,7 @@ func TestBootstrapReadsOnlyFixedControlEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bootstrap() error = %v", err)
 	}
-	if result.Runtime.InstanceID != "runtime-1" || result.Health.Status != "ok" || !result.MCP.ControlPlaneOn {
+	if result.Runtime.InstanceID != "runtime-1" || result.Health.Status != "ok" || !result.MCP.ControlPlaneOn || result.Core.Core == nil || result.Core.Core.PID != 14560 {
 		t.Fatalf("Bootstrap() = %+v", result)
 	}
 }
