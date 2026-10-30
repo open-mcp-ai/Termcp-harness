@@ -26,9 +26,11 @@ docs/
 │   ├── README.md
 │   ├── core/v0.2.8/
 │   │   ├── metadata.md
-│   │   └── mcp.md
+│   │   ├── mcp.md
+│   │   └── known-issues.md
 │   └── harness/v0.1/
 │       ├── control-api.md
+│       ├── core-instance.md
 │       ├── desktop-shell.md
 │       ├── event-log.md
 │       ├── mcp-server-states.md
@@ -62,10 +64,11 @@ docs/
 10. `docs/contracts/README.md`
 11. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
 12. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
-13. `docs/contracts/core/v0.2.8/metadata.md` 与 `mcp.md`（已验证 Core 基线）
-14. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
-15. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
-16. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
+13. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
+14. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
+15. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
+16. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
+17. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
 
 ## 文档职责
 

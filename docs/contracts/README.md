@@ -31,6 +31,7 @@ Core 计划基线：
 注意：
 
 - 2026-10-28 已通过本机安装的 `termcp v0.2.8 (commit 0595cb5)` 和运行中实例完成 MCP 握手/能力读取，证据见 `core/v0.2.8/`。
+- Core v0.2.8 的未关闭上游问题和严格契约测试统一登记在 `core/v0.2.8/known-issues.md`；Core 相关开发和汇报必须先检查该文件。
 - 本机 Core 源码 clone 仍落后于该快照，不能直接作为 v0.2.8 的证明。
 - 公开文档、实际代码、集成测试和团队确认的证据强度不同，必须分别记录。
 - Harness Runtime 已有 Headless 骨架、本地控制 API v1 草案、工具/审批状态机和 MCP Server 状态模型，见 `harness/v0.1/`；兼容性尚未承诺。

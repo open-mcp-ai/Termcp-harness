@@ -98,7 +98,9 @@ Terminal Workspace 不是：
 - 唯一控制入口。
 - 完整 SSH 管理器的自动复制品。
 
-当前已建立 Wails + React/TypeScript Desktop Shell，只读取 Runtime、MCP 注册和事件窗口；终端流、审批操作和安装包尚未接入。详见 `docs/contracts/harness/v0.1/desktop-shell.md`。
+当前已建立 Wails + React/TypeScript Desktop Shell，只读取 Runtime、Core 身份、MCP 注册和事件窗口；终端流、审批操作和安装包尚未接入。Core 面板展示 external/managed/unverified 所有权、PID、启动时间和实例键，详见 `docs/contracts/harness/v0.1/core-instance.md` 与 `docs/contracts/harness/v0.1/desktop-shell.md`。
+
+Harness 当前通过 `/api/version` 和 `/api/daemon` 识别 Core，以端点、PID、启动时间和版本生成实例键。端点可达不等于取得进程所有权；受管绑定必须与 Harness 启动时记录的 PID 和启动时间匹配。端口、PID 或版本中的单项都不能作为长期身份。
 
 ## 3. 稳定内核与开放边缘
 
@@ -112,6 +114,7 @@ Terminal Workspace 不是：
 - 事件日志与操作关联。
 - 取消、超时、重试和恢复语义。
 - MCP 连接与能力状态。
+- Core 实例身份、所有权与重启检测。
 - 控制 API、兼容性和安全入口。
 
 稳定内核可以有可测试的扩展点，但扩展不能成为修改安全语义的隐藏通道。
@@ -256,7 +259,7 @@ Termcp Core 是其中一个 MCP Server，不是唯一的工具来源。Harness �
 
 这些状态是否可被可信确认，最终取决于 Core/MCP 契约。客户端和 Runtime 不得用自己的本地状态伪造服务端终态。
 
-当前本地状态机实现与测试边界见 `docs/contracts/harness/v0.1/state-machines.md`；它尚未接入真实 MCP/Core。
+当前本地状态机已通过 `internal/toolpipeline` 接入 MCP Host，支持显式 Server/工具/精确参数 allowlist、参数与结果上限、控制事件轨迹和同步调用收敛。成功、工具级失败、传输结果未知、真实 Core 的幂等覆盖写入、副作用超时未知和调用侧 MCP Host 断开后的 `unknown` 已由测试覆盖。调用取消同样只形成本地 `unknown`，远端命令可能继续；20,000 行输出和 12 路并发只读调用已通过真实 Core 测试。远端 `review_pending` 现已映射为 `approval_pending`，真实 Core 的批准、拒绝、并发决定和断开后审批已实测；审批决定管理、等待和恢复尚未接入 Runtime。Core 0.2.8 的过期批准与 session 关闭后取消状态可见性存在已记录偏差。该测试不证明远端 idempotency key、真实网络分区或可信未执行查询。`accepted`、`running`、Agent Loop 和后续恢复仍未接入，不得由本地时间伪造。边界见 `docs/contracts/harness/v0.1/state-machines.md`。
 
 ### 6.3 重试规则
 

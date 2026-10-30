@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { desktopAvailable, loadBootstrap, windowAction } from "./api";
-import { mcpFailureLabel, mcpStateLabel, messages } from "./i18n";
+import { coreOwnershipLabel, coreStateLabel, mcpFailureLabel, mcpStateLabel, messages } from "./i18n";
 import type { Bootstrap, HarnessEvent, RuntimeState } from "./types";
 
 type Filter = "all" | "control" | "diagnostic";
 
 const stateCopy: Record<RuntimeState, string> = messages.state;
 
-function Icon({ name }: { name: "ledger" | "runtime" | "mcp" | "refresh" | "min" | "max" | "close" }) {
+function Icon({ name }: { name: "ledger" | "core" | "runtime" | "mcp" | "refresh" | "min" | "max" | "close" }) {
   const paths = {
     ledger: <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" />,
+    core: <path d="M12 3 4 7v10l8 4 8-4V7zM4 7l8 4 8-4M12 11v10" />,
     runtime: <path d="M7 4h10l3 3v10l-3 3H7l-3-3V7zM8 8h8v8H8z" />,
     mcp: <path d="M6 7h5v5H6zM13 12h5v5h-5zM11 9h2v5h-2z" />,
     refresh: <path d="M19 8V4l-2 2a8 8 0 1 0 2.3 7M19 4h-4" />,
@@ -229,6 +230,68 @@ function RuntimeInspector({ data, stale }: { data: Bootstrap; stale: boolean }) 
   );
 }
 
+function CoreInspector({ data, stale }: { data: Bootstrap; stale: boolean }) {
+  const core = data.core.core;
+  const displayState = stale ? "unknown" : core?.state ?? "unavailable";
+  return (
+    <section className={`inspector-section ${stale ? "is-stale" : ""}`} id="core" aria-labelledby="core-title">
+      <header className="inspector-heading">
+        <div>
+          <p className="context-line">{stale ? messages.core.contextStale : messages.core.context}</p>
+          <h2 id="core-title">{messages.core.title}</h2>
+        </div>
+        {core ? (
+          <span className={`state-pill state-${displayState}`}>
+            <span className="state-dot" aria-hidden="true" />
+            {stale ? messages.state.unknown : coreStateLabel(core.state)}
+          </span>
+        ) : (
+          <span className={`count-badge ${stale ? "stale" : ""}`}>{messages.core.unconfigured}</span>
+        )}
+      </header>
+      {stale ? <div className="snapshot-notice">{messages.core.lastKnownNote}</div> : null}
+      {!data.core.configured ? (
+        <div className="compact-empty">
+          <strong>{messages.core.unconfigured}</strong>
+          <p>{messages.core.unconfiguredBody}</p>
+        </div>
+      ) : !core ? (
+        <div className="compact-empty">
+          <strong>{messages.core.notIdentified}</strong>
+          <p>{messages.core.notIdentifiedBody}</p>
+        </div>
+      ) : (
+        <>
+          <dl className="fact-list">
+            <div><dt>{messages.core.endpoint}</dt><dd title={core.endpoint}>{core.endpoint}</dd></div>
+            <div><dt>{messages.core.ownership}</dt><dd>{coreOwnershipLabel(core.ownership)}</dd></div>
+            <div><dt>{messages.core.version}</dt><dd>{core.version ?? messages.common.unknown}</dd></div>
+            <div><dt>{messages.core.pid}</dt><dd>{core.pid ?? messages.common.unknown}</dd></div>
+            <div><dt>{messages.core.started}</dt><dd>{formatDate(core.started_at)}</dd></div>
+            <div><dt>{messages.core.instance}</dt><dd title={core.instance_key}>{shortID(core.instance_key)}</dd></div>
+            <div><dt>{messages.core.daemon}</dt><dd>{core.daemon ? messages.core.daemonMode : messages.core.standaloneMode}</dd></div>
+          </dl>
+          {core.last_error ? (
+            <div className="compact-empty">
+              <strong>{messages.core.lastError}</strong>
+              <p>{core.last_error}</p>
+            </div>
+          ) : null}
+          {!stale ? (
+            <p className="inspector-note">
+              {core.ownership === "managed"
+                ? messages.core.managedNote
+                : core.ownership === "external"
+                  ? messages.core.externalNote
+                  : messages.core.unverifiedNote}
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
+}
+
 function MCPInspector({ data, stale }: { data: Bootstrap; stale: boolean }) {
   return (
     <section className={`inspector-section ${stale ? "is-stale" : ""}`} id="mcp" aria-labelledby="mcp-title">
@@ -340,6 +403,9 @@ function App() {
           <a href="#runtime" className="rail-link" aria-label={messages.nav.runtime} title={messages.nav.runtime}>
             <Icon name="runtime" />
           </a>
+          <a href="#core" className="rail-link" aria-label={messages.nav.core} title={messages.nav.core}>
+            <Icon name="core" />
+          </a>
           <a href="#mcp" className="rail-link" aria-label={messages.nav.mcp} title={messages.nav.mcp}>
             <Icon name="mcp" />
           </a>
@@ -398,6 +464,7 @@ function App() {
         <aside className="inspector no-drag" aria-label={messages.app.runtimeDetails}>
           {data ? (
             <>
+              <CoreInspector data={data} stale={stale} />
               <RuntimeInspector data={data} stale={stale} />
               <MCPInspector data={data} stale={stale} />
             </>

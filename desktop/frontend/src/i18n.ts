@@ -27,6 +27,7 @@ const zhCN = {
   },
   nav: {
     label: "工作区导航",
+    core: "Termcp Core",
     ledger: "事件流",
     runtime: "Harness Runtime",
     mcp: "MCP 服务",
@@ -104,6 +105,39 @@ const zhCN = {
     healthUnavailable: "不可用",
     lastKnownNote: "Harness Runtime 当前不可达。以下字段是最后一次成功读取的快照，不代表当前状态。",
   },
+  core: {
+    context: "执行平面",
+    contextStale: "执行平面 · 最后快照",
+    title: "Termcp Core",
+    endpoint: "端点",
+    ownership: "所有权",
+    version: "版本",
+    pid: "进程 PID",
+    started: "进程启动",
+    instance: "实例键",
+    daemon: "运行模式",
+    daemonMode: "daemon",
+    standaloneMode: "standalone",
+    unconfigured: "未配置 Core 身份",
+    unconfiguredBody: "使用 --core-endpoint 或 --mcp-endpoint 指定 Core。",
+    notIdentified: "尚未完成识别",
+    notIdentifiedBody: "Harness 还没有获得可信的 Core 实例身份快照。",
+    externalNote: "外部 Core 只被识别和连接，不会被 Harness 停止。",
+    managedNote: "受管 Core 的 PID 与启动时间已通过绑定证据验证。",
+    unverifiedNote: "所有权声明未通过验证；Harness 不会据此管理或停止该进程。",
+    lastKnownNote: "Harness Runtime 当前不可达。以下 Core 身份来自最后一次成功读取。",
+    lastError: "最近错误",
+  },
+  coreState: {
+    identified: "已识别",
+    unavailable: "不可用",
+    conflict: "身份冲突",
+  },
+  coreOwnership: {
+    external: "外部",
+    managed: "受管",
+    unverified: "未验证",
+  },
   mcp: {
     context: "工具来源",
     contextStale: "工具来源 · 最后快照",
@@ -165,4 +199,12 @@ export function mcpStateLabel(value: string): string {
 export function mcpFailureLabel(value?: string): string {
   if (!value) return "";
   return messages.mcpFailure[value as keyof typeof messages.mcpFailure] ?? value;
+}
+
+export function coreStateLabel(value: string): string {
+  return messages.coreState[value as keyof typeof messages.coreState] ?? value;
+}
+
+export function coreOwnershipLabel(value: string): string {
+  return messages.coreOwnership[value as keyof typeof messages.coreOwnership] ?? value;
 }

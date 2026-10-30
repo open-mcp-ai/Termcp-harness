@@ -873,6 +873,18 @@ h1 {
   border-color: #edcabe;
 }
 
+.state-pill.state-conflict {
+  color: #8b3d2a;
+  background: var(--alert-pale);
+  border-color: #edcabe;
+}
+
+.state-pill.state-unavailable {
+  color: #815616;
+  background: #fbf2df;
+  border-color: #ead4a6;
+}
+
 .state-pill.state-unknown {
   color: #586477;
   background: #edf0f5;

@@ -6,10 +6,11 @@
 
 ## 工作区现状（先确认，别假设）
 
-- 已有 Go 1.27 Headless Runtime 与 Wails Desktop：`cmd/termcp-harness`、`internal/runtime`、`internal/controlapi`、`internal/daemon`、`internal/toolcall`、`internal/approval`、`internal/mcpcontrol`、`internal/eventlog`、`internal/controlclient` 和 `desktop/`。当前仍**没有 CI**；Git 已初始化，开发分支为 `dev`。
-- 当前已实现 Runtime 实例生命周期、本地控制 API、有界事件日志、工具调用/审批状态机、持久 MCP Host、`tools/list_changed` 失效、Streamable HTTP 探测器和 Desktop 只读工作台，并通过 Core 0.2.8 真实连接、能力读取与只读 `term` 帮助调用；**MCP 认证/自动重连、Agent Loop、终端 Session 工具执行和审批集成尚未实现**。
+- 已有 Go 1.27 Headless Runtime 与 Wails Desktop：`cmd/termcp-harness`、`internal/runtime`、`internal/controlapi`、`internal/daemon`、`internal/coreinstance`、`internal/toolcall`、`internal/toolpipeline`、`internal/approval`、`internal/mcpcontrol`、`internal/eventlog`、`internal/controlclient` 和 `desktop/`。当前仍**没有 CI**；Git 已初始化，开发分支为 `dev`。
+- 当前已实现 Runtime 实例生命周期、本地控制 API、有界事件日志、Core 实例识别与受管所有权校验、工具调用/审批状态机、持久 MCP Host、`tools/list_changed` 失效、Streamable HTTP 探测器和 Desktop 只读工作台；Core 身份通过 `/api/version` + `/api/daemon` 识别，使用端点、PID、启动时间和版本生成实例键，区分 external/managed/unverified 并检测重启。受控工具流水线已通过精确 allowlist、参数/结果上限、状态机和事件轨迹接入真实 Core 0.2.8；只读 `term`、幂等覆盖写入、副作用成功/超时未知、MCP Host 断开、调用取消、输出洪峰、12 路并发控制轨迹，以及 review pending/批准/拒绝/并发决定均有真实集成测试。`review_pending` 映射为 `approval_pending`，不会误记为成功；取消只保证本地 `unknown`，不保证远端停止。**Core 0.2.8 的审批过期和 session 关闭后取消状态存在已记录偏差，MCP 认证/自动重连、Agent Loop、受管 Core 子进程启动、终端 Session 工具执行和完整审批集成尚未实现**。
 - 这是**独立工作区**，不与旧实现合并；旧代码只作参考（见下节）。
 - 引入技术栈时，把真实可执行命令（含跑单个测试的写法）补进本文件与 README，否则后续 Agent 只能猜。
+- Core 相关开发、测试和汇报前必须检查 `docs/contracts/core/v0.2.8/known-issues.md`；未关闭问题不得写成已通过，汇报时使用醒目的 `CORE 上游问题` 警告块。
 - Harness Runtime 与 Terminal Workspace 必须分层；Runtime 目标是可 headless 运行，Terminal Workspace 是第一方体验层，不是唯一入口。
 - Web UI 暂停新增功能，见 `docs/product/WEB-DEFERRED.md`；不要为 Web 预建跨端通用框架。
 - **未经用户明确同意，不得 commit、push 或执行破坏性数据操作。**
@@ -26,6 +27,8 @@ go run ./cmd/termcp-harness version
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787
 go run ./cmd/termcp-harness mcp probe --endpoint http://127.0.0.1:18765/stream
 go run ./cmd/termcp-harness serve --mcp-endpoint http://127.0.0.1:18765/stream
+go run ./cmd/termcp-harness core identify --endpoint http://127.0.0.1:18765
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765
 ```
 
 Desktop 安装、检查、构建与启动：
@@ -54,6 +57,38 @@ go test ./internal/eventlog -run '^TestDiagnosticEvictionIsVisible$' -count=1
 $env:TERMCP_CORE_MCP_URL = 'http://127.0.0.1:18765/stream'
 go test ./internal/mcpcontrol -run '^TestProbeTermcpCoreIntegration$' -count=1
 go test ./internal/mcpcontrol -run '^TestHostLifecycleAndCapabilityNotification$' -count=1
+go test ./internal/toolpipeline -run '^TestTermcpCoreReadOnlyPipelineIntegration$' -count=1
+$env:TERMCP_CORE_WRITE_TEST = '1'
+$env:TERMCP_CORE_TEST_SESSION_ID = '<dedicated-session-id>'
+$env:TERMCP_CORE_TEST_HANDLE = '<dedicated-session-id>:1'
+$env:TERMCP_CORE_TEST_TEMP_DIR = $env:TEMP
+go test ./internal/toolpipeline -run '^TestTermcpCoreWriteEffectsIntegration$' -count=1 -v
+$env:TERMCP_CORE_POSIX_WRITE_TEST = '1'
+$env:TERMCP_CORE_TEST_SESSION_ID = '<dedicated-posix-session-id>'
+$env:TERMCP_CORE_TEST_HANDLE = '<dedicated-posix-session-id>:1'
+$env:TERMCP_CORE_TEST_TEMP_DIR = '/tmp'
+go test ./internal/toolpipeline -run '^TestTermcpCorePOSIXWriteEffectsIntegration$' -count=1 -v
+$env:TERMCP_CORE_POSIX_DISCONNECT_TEST = '1'
+$env:TERMCP_CORE_TEST_EFFECT_SESSION_ID = '<dedicated-effect-session-id>'
+$env:TERMCP_CORE_TEST_EFFECT_HANDLE = '<dedicated-effect-session-id>:1'
+$env:TERMCP_CORE_TEST_OBSERVER_SESSION_ID = '<dedicated-observer-session-id>'
+go test ./internal/toolpipeline -run '^TestTermcpCorePOSIXTransportDisconnectIntegration$' -count=1 -v
+$env:TERMCP_CORE_APPROVAL_TEST = '1'
+$env:TERMCP_CORE_TEST_EFFECT_SESSION_ID = '<dedicated-effect-session-id>'
+$env:TERMCP_CORE_TEST_EFFECT_HANDLE = '<dedicated-effect-session-id>:1'
+$env:TERMCP_CORE_TEST_OBSERVER_SESSION_ID = '<dedicated-observer-session-id>'
+go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalReviewIntegration$' -count=1 -v
+$env:TERMCP_CORE_APPROVAL_EXPIRY_TEST = '1'
+go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalExpiryContract$' -count=1 -v
+$env:TERMCP_CORE_APPROVAL_SESSION_DEATH_TEST = '1'
+go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalSessionDeathStateContract$' -count=1 -v
+$env:TERMCP_CORE_CANCEL_TEST = '1'
+$env:TERMCP_CORE_OUTPUT_FLOOD_TEST = '1'
+$env:TERMCP_CORE_CONCURRENT_TEST = '1'
+go test ./internal/toolpipeline -run '^TestTermcpCoreCancellationIntegration$' -count=1 -v
+go test ./internal/toolpipeline -run '^TestTermcpCoreOutputFloodIntegration$' -count=1 -v
+go test ./internal/toolpipeline -run '^TestTermcpCoreConcurrentControlTraceIntegration$' -count=1 -v
+# 测试结束后关闭并删除专用 session；测试只清理自己写入的临时文件。
 ```
 
 若 Agent 沙盒拒绝访问默认 Go 缓存，可把 `GOCACHE` 和 `GOTMPDIR` 指向任务临时目录后重跑；不要修改全局 Go 配置。控制 API 当前没有认证，只能绑定回环地址，不能通过 `0.0.0.0` 或局域网 IP 暴露。
@@ -92,12 +127,14 @@ go test ./internal/mcpcontrol -run '^TestHostLifecycleAndCapabilityNotification$
 - `docs/adr/ADR-012-runtime-bootstrap-technology.md` — **Proposed / bootstrap 已实现**：Go 1.27 作为 Runtime 起始技术选择；不等于长期进程模型、依赖或跨平台已经确认。
 - `docs/development/BRANCHING.md` — 上游分支观察与 Harness 的 trunk-based 分支策略。
 - `docs/contracts/README.md` — Core 与 Harness 公开契约、来源、版本和验证记录规范。
-- `docs/contracts/harness/v0.1/state-machines.md` — 工具调用、审批、结果未知与自动重试语义；尚未接入真实 MCP/Core。
+- `docs/contracts/harness/v0.1/core-instance.md` — Core 身份、external/managed/unverified 所有权、实例键和重启检测。
+- `docs/contracts/harness/v0.1/state-machines.md` — 工具调用、审批、结果未知与自动重试语义；工具调用已接入受控 MCP 流水线，审批尚未接入。
 - `docs/contracts/harness/v0.1/mcp-server-states.md` — MCP Server 的登记、连接、能力、启用和所有权状态边界。
 - `docs/contracts/harness/v0.1/event-log.md` — 本地事件顺序、有界保留、截断和补拉 API。
 - `docs/contracts/harness/v0.1/desktop-shell.md` — Desktop Wails 桥接、端点限制、视觉边界和未实现能力。
 - `docs/contracts/core/v0.2.8/metadata.md` — 已安装 Core 0.2.8 的来源、版本和实际端点证据。
 - `docs/contracts/core/v0.2.8/mcp.md` — Core MCP 握手、能力、工具 Schema 与待验证行为。
+- `docs/contracts/core/v0.2.8/known-issues.md` — Core v0.2.8 未关闭上游问题、严格契约测试、Harness 降级策略和关闭条件；Core 相关任务必须检查。
 - 文档名带版本号：升版时同步更新交叉引用和 `docs/README.md`，不要留下两个并行版本。
 
 ## 状态词汇（本项目最容易被写坏的地方）
