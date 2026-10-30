@@ -167,6 +167,6 @@ PID 可能复用，端口可能被重新绑定，因此不能只用 PID 或端�
 - 已实现外部 Core 的 `/api/version` + `/api/daemon` 身份识别。
 - 已用端点、PID、启动时间和版本生成实例键，未把端口或 PID 单项当作所有权。
 - 已实现 managed 绑定的 PID + 启动时间双重校验；不匹配时进入 `unverified/conflict`。
-- 已接入 `GET /v1/core`、`core identify` CLI、控制事件和 Desktop 只读面板。
+- 已接入 `GET /v1/core`、`core identify` CLI、控制事件和 Desktop Core 身份快照；Desktop 的其他 Session/审批能力使用 Harness 控制 API。
 - 尚未实现受管 Core 子进程的启动、停止、数据目录独占和进程路径验证。
 - ADR 状态仍为 Proposed；本进展不等于长期启动模式已确认。

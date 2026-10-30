@@ -40,6 +40,18 @@ func TestAppBootstrapReadsRuntimeContract(t *testing.T) {
 					"revision":     1,
 				},
 			})
+		case "/v1/approvals":
+			writeJSON(t, w, map[string]any{
+				"configured": true,
+				"total":      0,
+				"approvals":  []any{},
+			})
+		case "/v1/agent/sessions":
+			writeJSON(t, w, map[string]any{
+				"configured": true,
+				"total":      0,
+				"sessions":   []any{},
+			})
 		default:
 			http.NotFound(w, request)
 		}
@@ -50,7 +62,7 @@ func TestAppBootstrapReadsRuntimeContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("controlclient.New() error = %v", err)
 	}
-	app := newApp(client)
+	app := newApp(client, "")
 	app.ctx = context.Background()
 
 	bootstrap, err := app.Bootstrap()
@@ -70,10 +82,50 @@ func TestAppEventsRejectsInvalidLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("controlclient.New() error = %v", err)
 	}
-	app := newApp(client)
+	app := newApp(client, "")
 	app.ctx = context.Background()
 	if _, err := app.Events(0, 0); err == nil {
 		t.Fatal("Events(limit=0) error = nil")
+	}
+}
+
+func TestAppDecidesApprovalWithoutExposingToken(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/approvals/approval-1/decision" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		writeJSON(t, w, map[string]any{
+			"approval": map[string]any{
+				"id": "approval-1", "call_id": "call-1", "status": "approved",
+				"decision": "approve", "revision": 3,
+			},
+			"outcome": "confirmed",
+		})
+	}))
+	defer server.Close()
+	client, err := controlclient.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := newApp(client, token)
+	app.ctx = context.Background()
+	if !app.ApprovalControlAvailable() {
+		t.Fatal("ApprovalControlAvailable() = false")
+	}
+	result, err := app.DecideApproval("approval-1", 1, "approve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != "confirmed" || result.Approval.Status != "approved" {
+		t.Fatalf("result = %+v", result)
+	}
+	app.shutdown(context.Background())
+	if app.ApprovalControlAvailable() {
+		t.Fatal("token remained available after shutdown")
 	}
 }
 

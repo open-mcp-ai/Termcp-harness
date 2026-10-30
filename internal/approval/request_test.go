@@ -3,6 +3,7 @@ package approval
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRejectSubmissionIsNotRejectedUntilConfirmed(t *testing.T) {
@@ -99,6 +100,86 @@ func TestPendingExpirationAndSubmittingTimeoutAreDistinct(t *testing.T) {
 	}
 	if snapshot, err := submitting.Apply(2, EventMarkUnknown); err != nil || snapshot.Status != StatusUnknown {
 		t.Fatalf("submitting timeout = %+v, error = %v", snapshot, err)
+	}
+}
+
+func TestExecutionMetadataRequiresApprovalAndDeepCopies(t *testing.T) {
+	request := newRequest(t)
+	started := time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC)
+	if _, err := request.SetExecution(&Execution{
+		State: ExecutionRunning, StartedAt: started,
+	}); err == nil {
+		t.Fatal("execution was accepted before approval")
+	}
+	if _, err := request.Apply(1, EventSubmitApprove); err != nil {
+		t.Fatalf("submit Apply() error = %v", err)
+	}
+	if _, err := request.Apply(2, EventConfirmApproved); err != nil {
+		t.Fatalf("confirm Apply() error = %v", err)
+	}
+
+	finished := started.Add(time.Second)
+	snapshot, err := request.SetExecution(&Execution{
+		State: ExecutionSubmitted, StartedAt: started, FinishedAt: &finished,
+	})
+	if err != nil {
+		t.Fatalf("SetExecution() error = %v", err)
+	}
+	if snapshot.Execution == nil || snapshot.Execution.State != ExecutionSubmitted ||
+		snapshot.Revision != 3 {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	snapshot.Execution.State = ExecutionFailed
+	*snapshot.Execution.FinishedAt = finished.Add(time.Hour)
+	current := request.Snapshot()
+	if current.Execution == nil || current.Execution.State != ExecutionSubmitted ||
+		!current.Execution.FinishedAt.Equal(finished) {
+		t.Fatalf("stored execution was mutated through snapshot: %+v", current.Execution)
+	}
+}
+
+func TestExecutionTransitionsAreMonotonic(t *testing.T) {
+	request := newRequest(t)
+	if _, err := request.Apply(1, EventSubmitApprove); err != nil {
+		t.Fatalf("submit Apply() error = %v", err)
+	}
+	if _, err := request.Apply(2, EventConfirmApproved); err != nil {
+		t.Fatalf("confirm Apply() error = %v", err)
+	}
+	started := time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC)
+	finished := started.Add(time.Second)
+	if _, err := request.SetExecution(&Execution{State: ExecutionRunning, StartedAt: started}); err != nil {
+		t.Fatalf("running SetExecution() error = %v", err)
+	}
+	if _, err := request.SetExecution(&Execution{
+		State: ExecutionSucceeded, StartedAt: started, FinishedAt: &finished,
+	}); err != nil {
+		t.Fatalf("succeeded SetExecution() error = %v", err)
+	}
+	if _, err := request.SetExecution(&Execution{State: ExecutionRunning, StartedAt: started}); err == nil {
+		t.Fatal("execution regressed from succeeded to running")
+	}
+}
+
+func TestUnknownExecutionCanConverge(t *testing.T) {
+	request := newRequest(t)
+	if _, err := request.Apply(1, EventSubmitApprove); err != nil {
+		t.Fatalf("submit Apply() error = %v", err)
+	}
+	if _, err := request.Apply(2, EventConfirmApproved); err != nil {
+		t.Fatalf("confirm Apply() error = %v", err)
+	}
+	started := time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC)
+	finished := started.Add(time.Second)
+	if _, err := request.SetExecution(&Execution{
+		State: ExecutionUnknown, StartedAt: started, FinishedAt: &finished,
+	}); err != nil {
+		t.Fatalf("unknown SetExecution() error = %v", err)
+	}
+	if snapshot, err := request.SetExecution(&Execution{
+		State: ExecutionSucceeded, StartedAt: started, FinishedAt: &finished,
+	}); err != nil || snapshot.Execution == nil || snapshot.Execution.State != ExecutionSucceeded {
+		t.Fatalf("converged SetExecution() = %+v, error = %v", snapshot, err)
 	}
 }
 

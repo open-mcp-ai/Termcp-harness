@@ -6,10 +6,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
+	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
 func TestVersionCommand(t *testing.T) {
@@ -92,5 +96,157 @@ func TestCoreOriginFromMCP(t *testing.T) {
 	}
 	if got != "http://127.0.0.1:18765" {
 		t.Fatalf("coreOriginFromMCP() = %q", got)
+	}
+}
+
+func TestReadApprovalToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approval-token")
+	const token = "0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(path, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	got, err := readApprovalToken(path)
+	if err != nil {
+		t.Fatalf("readApprovalToken() error = %v", err)
+	}
+	if got != token {
+		t.Fatalf("token = %q, want %q", got, token)
+	}
+}
+
+func TestReadApprovalTokenRejectsEmptyAndOversizedFiles(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(empty) error = %v", err)
+	}
+	if _, err := readApprovalToken(empty); err == nil {
+		t.Fatal("empty token file was accepted")
+	}
+
+	oversized := filepath.Join(dir, "oversized")
+	if err := os.WriteFile(oversized, []byte(strings.Repeat("x", 4097)), 0o600); err != nil {
+		t.Fatalf("WriteFile(oversized) error = %v", err)
+	}
+	if _, err := readApprovalToken(oversized); err == nil {
+		t.Fatal("oversized token file was accepted")
+	}
+}
+
+func TestApprovalsDecideCommand(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/approvals/approval-1/decision" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization header mismatch")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"approval": map[string]any{
+				"id": "approval-1", "call_id": "call-1", "status": "approved",
+				"decision": "approve", "revision": 3,
+			},
+			"outcome": "confirmed",
+		})
+	}))
+	defer server.Close()
+
+	tokenPath := filepath.Join(t.TempDir(), "approval-token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"approvals", "decide",
+		"--runtime", server.URL,
+		"--id", "approval-1",
+		"--revision", "1",
+		"--decision", "approve",
+		"--token-file", tokenPath,
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if strings.Contains(stdout.String(), token) || strings.Contains(stderr.String(), token) {
+		t.Fatal("approval token appeared in command output")
+	}
+	var result controlclient.ApprovalDecisionResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if result.Outcome != "confirmed" || result.Approval.ID != "approval-1" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestApprovalsDecideRejectsInvalidDecision(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "approval-token")
+	if err := os.WriteFile(tokenPath, []byte("0123456789abcdef0123456789abcdef"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"approvals", "decide",
+		"--id", "approval-1",
+		"--revision", "1",
+		"--decision", "maybe",
+		"--token-file", tokenPath,
+	}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("invalid decision was accepted")
+	}
+}
+
+func TestLoadToolPolicyRequiresExactAllowlist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tool-policy.json")
+	if err := os.WriteFile(path, []byte(`{
+		"rules":[{
+			"server_id":"termcp-core",
+			"tool_name":"term",
+			"effect":"read_only",
+			"arguments":{"cmd":""}
+		}]
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := loadToolPolicy(path)
+	if err != nil {
+		t.Fatalf("loadToolPolicy() error = %v", err)
+	}
+	allowed, err := policy.Decide(context.Background(), toolpipeline.Request{
+		ServerID: "termcp-core", ToolName: "term",
+		Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil || !allowed.Allowed {
+		t.Fatalf("allowed decision = %+v, error = %v", allowed, err)
+	}
+	blocked, err := policy.Decide(context.Background(), toolpipeline.Request{
+		ServerID: "termcp-core", ToolName: "term",
+		Arguments: json.RawMessage(`{"cmd":"printf different"}`),
+	})
+	if err != nil || blocked.Allowed {
+		t.Fatalf("blocked decision = %+v, error = %v", blocked, err)
+	}
+}
+
+func TestLoadAgentSteps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "steps.json")
+	if err := os.WriteFile(path, []byte(`{"steps":[{
+		"call_id":"call-1",
+		"server_id":"termcp-core",
+		"tool_name":"term",
+		"arguments":{"cmd":""}
+	}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	steps, err := loadAgentSteps(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].CallID != "call-1" ||
+		steps[0].ServerID != "termcp-core" || steps[0].ToolName != "term" {
+		t.Fatalf("steps = %+v", steps)
 	}
 }

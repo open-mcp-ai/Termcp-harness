@@ -15,7 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/agentsession"
+	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/controlapi"
+	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreapproval"
 	"github.com/open-mcp-ai/termcp-harness/internal/corebundle"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreprocess"
@@ -23,6 +27,8 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	runtimepkg "github.com/open-mcp-ai/termcp-harness/internal/runtime"
+	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
+	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
 var version = "dev"
@@ -52,8 +58,146 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runMCP(ctx, args[1:], stdout, stderr)
 	case "core":
 		return runCore(ctx, args[1:], stdout, stderr)
+	case "approvals":
+		return runApprovals(ctx, args[1:], stdout, stderr)
+	case "agent":
+		return runAgent(ctx, args[1:], stdout, stderr)
 	default:
 		return usageError()
+	}
+}
+
+func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] != "run" {
+		return errors.New("usage: termcp-harness agent run --id <session-id> --steps-file <path> --token-file <path>")
+	}
+	flags := flag.NewFlagSet("agent run", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runtimeEndpoint := flags.String("runtime", "http://127.0.0.1:8787", "Harness Runtime control API origin")
+	id := flags.String("id", "", "Agent Session ID")
+	coreSessionID := flags.String("core-session-id", "", "optional trusted Core Session ID")
+	stepsFile := flags.String("steps-file", "", "JSON file containing ordered Agent Session steps")
+	tokenFile := flags.String("token-file", "", "file containing the control bearer token")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	if strings.TrimSpace(*id) == "" || strings.TrimSpace(*stepsFile) == "" ||
+		strings.TrimSpace(*tokenFile) == "" {
+		return errors.New("id, steps-file, and token-file are required")
+	}
+	steps, err := loadAgentSteps(*stepsFile)
+	if err != nil {
+		return err
+	}
+	token, err := readApprovalToken(*tokenFile)
+	if err != nil {
+		return err
+	}
+	client, err := controlclient.New(*runtimeEndpoint)
+	if err != nil {
+		return err
+	}
+	if _, err := client.CreateAgentSession(ctx, *id, *coreSessionID, token); err != nil {
+		return fmt.Errorf("create Agent Session: %w", err)
+	}
+	result, err := client.RunAgentSession(ctx, *id, steps, token)
+	if err != nil {
+		return fmt.Errorf("run Agent Session: %w", err)
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func loadAgentSteps(path string) ([]toolpipeline.Request, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open Agent steps file: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 1<<20+1))
+	if err != nil {
+		return nil, fmt.Errorf("read Agent steps file: %w", err)
+	}
+	if len(data) > 1<<20 {
+		return nil, errors.New("Agent steps file exceeds 1 MiB")
+	}
+	var document struct {
+		Steps []toolpipeline.Request `json:"steps"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&document); err != nil {
+		return nil, fmt.Errorf("decode Agent steps file: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("Agent steps file contains multiple JSON values")
+	}
+	if len(document.Steps) == 0 || len(document.Steps) > 64 {
+		return nil, errors.New("Agent steps file must contain between 1 and 64 steps")
+	}
+	return document.Steps, nil
+}
+
+func runApprovals(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] != "decide" {
+		return errors.New("usage: termcp-harness approvals decide --id <approval-id> --revision <n> --decision <approve|reject> --token-file <path>")
+	}
+	flags := flag.NewFlagSet("approvals decide", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runtimeEndpoint := flags.String("runtime", "http://127.0.0.1:8787", "Harness Runtime control API origin")
+	id := flags.String("id", "", "approval request ID")
+	revision := flags.Uint64("revision", 0, "observed approval revision")
+	decisionText := flags.String("decision", "", "approve or reject")
+	tokenFile := flags.String("token-file", "", "file containing the approval bearer token")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	if strings.TrimSpace(*id) == "" || *revision == 0 || strings.TrimSpace(*tokenFile) == "" {
+		return errors.New("id, revision, decision, and token-file are required")
+	}
+	decision, err := parseApprovalDecision(*decisionText)
+	if err != nil {
+		return err
+	}
+	token, err := readApprovalToken(*tokenFile)
+	if err != nil {
+		return err
+	}
+	client, err := controlclient.New(*runtimeEndpoint)
+	if err != nil {
+		return err
+	}
+	result, err := client.DecideApproval(
+		ctx,
+		*id,
+		approval.Revision(*revision),
+		decision,
+		token,
+	)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func parseApprovalDecision(raw string) (approval.Decision, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(approval.DecisionApprove):
+		return approval.DecisionApprove, nil
+	case string(approval.DecisionReject):
+		return approval.DecisionReject, nil
+	default:
+		return approval.DecisionNone, errors.New("decision must be approve or reject")
 	}
 }
 
@@ -167,26 +311,26 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	coreLogPath := flags.String("core-log", "", "bundled Core log path; defaults to <data-dir>/logs/core.log")
 	coreStartTimeout := flags.Duration("core-start-timeout", 20*time.Second, "bundled Core readiness timeout")
 	coreNoInternal := flags.Bool("core-no-internal", false, "disable bundled Core's built-in loopback SSH profile")
+	approvalTokenFile := flags.String("approval-token-file", "", "file containing a bearer token required for approval decisions")
+	toolPolicyFile := flags.String("tool-policy-file", "", "JSON file containing exact MCP tool allowlist rules")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
+	if strings.TrimSpace(*toolPolicyFile) != "" && strings.TrimSpace(*approvalTokenFile) == "" {
+		return errors.New("--tool-policy-file requires --approval-token-file for protected Agent Session execution")
+	}
 
 	journal := eventlog.New()
 	host := mcpcontrol.NewHost(mcpcontrol.WithHostEventLog(journal))
 	coreManager := coreinstance.NewManager(journal)
-	rt, err := runtimepkg.New(version, runtimepkg.WithEventLog(journal))
+	agentSessions, err := agentsession.NewManager(journal)
 	if err != nil {
 		return err
 	}
-	server, err := daemon.NewServer(*listenAddress, controlapi.NewHandler(
-		rt,
-		controlapi.WithEventLog(journal),
-		controlapi.WithMCPRegistry(host),
-		controlapi.WithCore(coreManager),
-	), rt)
+	rt, err := runtimepkg.New(version, runtimepkg.WithEventLog(journal))
 	if err != nil {
 		return err
 	}
@@ -304,6 +448,73 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 			}()
 		}
 	}
+
+	controlOptions := []controlapi.Option{
+		controlapi.WithEventLog(journal),
+		controlapi.WithMCPRegistry(host),
+		controlapi.WithCore(coreManager),
+		controlapi.WithAgentSessions(agentSessions),
+	}
+	var approvalCoordinator *approval.Coordinator
+	if resolvedCoreEndpoint != "" {
+		approvalClient, clientErr := coreapproval.NewClient(resolvedCoreEndpoint, mcpAuthToken, nil)
+		if clientErr != nil {
+			return fmt.Errorf("create Core approval client: %w", clientErr)
+		}
+		var coordinatorErr error
+		approvalCoordinator, coordinatorErr = approval.NewCoordinator(
+			journal,
+			approvalClient,
+			approval.WithDecisionObserver(agentSessions),
+		)
+		if coordinatorErr != nil {
+			return fmt.Errorf("create approval coordinator: %w", coordinatorErr)
+		}
+		controlOptions = append(controlOptions, controlapi.WithApprovals(approvalCoordinator))
+	}
+	if strings.TrimSpace(*approvalTokenFile) != "" {
+		token, tokenErr := readApprovalToken(*approvalTokenFile)
+		if tokenErr != nil {
+			return tokenErr
+		}
+		authorizer, authorizerErr := controlapi.NewApprovalAuthorizer(token)
+		if authorizerErr != nil {
+			return fmt.Errorf("load approval authorizer: %w", authorizerErr)
+		}
+		controlOptions = append(controlOptions, controlapi.WithApprovalAuthorizer(authorizer))
+		if approvalCoordinator != nil {
+			controlOptions = append(controlOptions, controlapi.WithApprovalDecider(approvalCoordinator))
+		}
+	}
+	var toolInvoker agentsession.Invoker
+	if strings.TrimSpace(*toolPolicyFile) != "" {
+		if resolvedMCPEndpoint == "" {
+			return errors.New("--tool-policy-file requires an MCP endpoint")
+		}
+		policy, policyErr := loadToolPolicy(*toolPolicyFile)
+		if policyErr != nil {
+			return policyErr
+		}
+		options := []toolpipeline.Option{}
+		if approvalCoordinator != nil {
+			options = append(options, toolpipeline.WithApprovalTracker(approvalCoordinator))
+		}
+		pipeline, pipelineErr := toolpipeline.New(policy, host, journal, options...)
+		if pipelineErr != nil {
+			return fmt.Errorf("create tool pipeline: %w", pipelineErr)
+		}
+		toolInvoker = pipeline
+	}
+	controlOptions = append(controlOptions, controlapi.WithAgentSessionRunner(agentSessions, toolInvoker))
+	server, err := daemon.NewServer(
+		*listenAddress,
+		controlapi.NewHandler(rt, controlOptions...),
+		rt,
+	)
+	if err != nil {
+		return err
+	}
+
 	if resolvedMCPEndpoint != "" {
 		if _, err := host.Register(mcpcontrol.Spec{
 			ID:        *mcpID,
@@ -344,7 +555,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 }
 
 func usageError() error {
-	return errors.New("usage: termcp-harness <serve|mcp|core|version>")
+	return errors.New("usage: termcp-harness <serve|mcp|core|agent|approvals|version>")
 }
 
 func coreOriginFromMCP(raw string) (string, error) {
@@ -359,4 +570,43 @@ func coreOriginFromMCP(raw string) (string, error) {
 		return "", errors.New("MCP endpoint host is required")
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
+}
+
+func loadToolPolicy(path string) (*toolpipeline.AllowlistPolicy, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open tool policy file: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 1<<20+1))
+	if err != nil {
+		return nil, fmt.Errorf("read tool policy file: %w", err)
+	}
+	if len(data) > 1<<20 {
+		return nil, errors.New("tool policy file exceeds 1 MiB")
+	}
+	var document struct {
+		Rules []toolpipeline.Rule `json:"rules"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&document); err != nil {
+		return nil, fmt.Errorf("decode tool policy file: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("tool policy file contains multiple JSON values")
+	}
+	if len(document.Rules) == 0 {
+		return nil, errors.New("tool policy file requires at least one rule")
+	}
+	policy, err := toolpipeline.NewAllowlistPolicy(document.Rules...)
+	if err != nil {
+		return nil, fmt.Errorf("compile tool policy: %w", err)
+	}
+	return policy, nil
+}
+
+func readApprovalToken(path string) (string, error) {
+	return tokenfile.Read(path)
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 )
@@ -287,6 +288,9 @@ func TestPipelineReviewPendingIsNotSuccess(t *testing.T) {
 	if outcome.Call.Status != toolcall.StatusApprovalPending || outcome.Call.Attempts != 1 {
 		t.Fatalf("review pending call = %+v", outcome.Call)
 	}
+	if outcome.Approval == nil || outcome.Approval.Correlation != approval.CorrelationUnknown || outcome.Approval.ID != "" {
+		t.Fatalf("approval reference = %+v, want unknown without an explicit ID", outcome.Approval)
+	}
 	window, queryErr := journal.Query(0, 100)
 	if queryErr != nil {
 		t.Fatalf("Query() error = %v", queryErr)
@@ -318,6 +322,9 @@ func TestPipelineReviewPendingTERMTextIsNotSuccess(t *testing.T) {
 	if outcome.Call.Status != toolcall.StatusApprovalPending {
 		t.Fatalf("review pending call = %+v", outcome.Call)
 	}
+	if outcome.Approval == nil || outcome.Approval.Correlation != approval.CorrelationUnknown {
+		t.Fatalf("TERM review reference = %+v, want unknown correlation", outcome.Approval)
+	}
 	window, queryErr := journal.Query(0, 100)
 	if queryErr != nil {
 		t.Fatalf("Query() error = %v", queryErr)
@@ -328,6 +335,209 @@ func TestPipelineReviewPendingTERMTextIsNotSuccess(t *testing.T) {
 		eventlog.TypeToolCallDispatching,
 		eventlog.TypeToolCallApprovalPending,
 	})
+}
+
+func TestPipelineReviewPendingCapturesTrustedTERMHeaders(t *testing.T) {
+	const expiresAt = int64(1793300000000)
+	dispatcher := &fakeDispatcher{result: mcp.NewToolResultText(
+		"TERM/1 202 Accepted\n" +
+			"Path: write session-1 file /tmp/x --data hi\n" +
+			"Approval-ID: approval-term\n" +
+			"Session-ID: session-1\n" +
+			"Expires-At: 1793300000000\n\n" +
+			"Submitted for review: write 2 bytes to /tmp/x",
+	)}
+	tracker := &fakeApprovalTracker{}
+	pipeline, _ := newTestPipelineWithOptions(
+		t,
+		dispatcher,
+		[]Rule{allowedRule()},
+		WithApprovalTracker(tracker),
+	)
+	outcome, err := pipeline.Invoke(context.Background(), Request{
+		CallID: "call-review-terM-correlation", ServerID: "termcp-core",
+		ToolName: "term", Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if outcome.Call.Status != toolcall.StatusApprovalPending ||
+		outcome.Approval == nil ||
+		outcome.Approval.Correlation != approval.CorrelationTrusted ||
+		outcome.Approval.ID != "approval-term" ||
+		outcome.Approval.SessionID != "session-1" ||
+		outcome.Approval.ExpiresAt == nil ||
+		outcome.Approval.ExpiresAt.UnixMilli() != expiresAt ||
+		!strings.HasPrefix(outcome.Approval.Summary, "Submitted for review:") ||
+		strings.Contains(outcome.Approval.Summary, "Approval-ID:") ||
+		strings.Contains(outcome.Approval.Summary, "A human decides") ||
+		strings.Contains(outcome.Approval.Summary, "Use approval_id") {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	calls := tracker.Calls()
+	if len(calls) != 1 || calls[0].Reference.ID != "approval-term" {
+		t.Fatalf("tracker calls = %+v", calls)
+	}
+}
+
+func TestPipelineReviewPendingCapturesTrustedApprovalReference(t *testing.T) {
+	const expiresAt = int64(1793300000000)
+	dispatcher := &fakeDispatcher{result: mcp.NewToolResultStructured(map[string]any{
+		"ok":             true,
+		"approved":       false,
+		"review_pending": true,
+		"message":        "write is awaiting review",
+		"approval_id":    "approval-123",
+		"session_id":     "session-456",
+		"expires_at":     expiresAt,
+	}, "write is awaiting review")}
+	pipeline, journal := newTestPipeline(t, dispatcher, allowedRule())
+
+	outcome, err := pipeline.Invoke(context.Background(), Request{
+		CallID:    "call-review-correlated",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if outcome.Approval == nil {
+		t.Fatal("approval reference is nil")
+	}
+	if outcome.Approval.Correlation != approval.CorrelationTrusted || outcome.Approval.ID != "approval-123" || outcome.Approval.SessionID != "session-456" {
+		t.Fatalf("approval reference = %+v", outcome.Approval)
+	}
+	if outcome.Approval.ExpiresAt == nil || outcome.Approval.ExpiresAt.UnixMilli() != expiresAt {
+		t.Fatalf("approval expiry = %+v, want %d", outcome.Approval.ExpiresAt, expiresAt)
+	}
+
+	window, queryErr := journal.Query(0, 100)
+	if queryErr != nil {
+		t.Fatalf("Query() error = %v", queryErr)
+	}
+	if len(window.Events) != 4 {
+		t.Fatalf("event count = %d, want 4", len(window.Events))
+	}
+	var data map[string]any
+	if err := json.Unmarshal(window.Events[3].Data, &data); err != nil {
+		t.Fatalf("decode approval event: %v", err)
+	}
+	if data["approval_correlation"] != string(approval.CorrelationTrusted) || data["approval_id"] != "approval-123" || data["approval_session_id"] != "session-456" {
+		t.Fatalf("approval event data = %+v", data)
+	}
+}
+
+func TestPipelineReviewPendingCapturesApprovalReferenceFromJSONText(t *testing.T) {
+	dispatcher := &fakeDispatcher{result: mcp.NewToolResultText(`{"review_pending":true,"approval_id":"approval-text","session_id":"session-text"}`)}
+	pipeline, _ := newTestPipeline(t, dispatcher, allowedRule())
+
+	outcome, err := pipeline.Invoke(context.Background(), Request{
+		CallID:    "call-review-text-correlation",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if outcome.Approval == nil || outcome.Approval.Correlation != approval.CorrelationTrusted || outcome.Approval.ID != "approval-text" || outcome.Approval.SessionID != "session-text" {
+		t.Fatalf("approval reference = %+v", outcome.Approval)
+	}
+}
+
+func TestPipelineTracksOnlyTrustedApprovalReferences(t *testing.T) {
+	tracker := &fakeApprovalTracker{}
+	dispatcher := &fakeDispatcher{result: mcp.NewToolResultStructured(map[string]any{
+		"review_pending": true,
+		"approval_id":    "approval-123",
+		"session_id":     "session-456",
+	}, "pending")}
+	pipeline, _ := newTestPipelineWithOptions(t, dispatcher, []Rule{allowedRule()}, WithApprovalTracker(tracker))
+
+	outcome, err := pipeline.Invoke(context.Background(), Request{
+		CallID:    "call-review-tracked",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if outcome.Approval == nil || outcome.Approval.Correlation != approval.CorrelationTrusted {
+		t.Fatalf("approval = %+v", outcome.Approval)
+	}
+	calls := tracker.Calls()
+	if len(calls) != 1 || calls[0].CallID != "call-review-tracked" || calls[0].Reference.ID != "approval-123" {
+		t.Fatalf("tracked calls = %+v", calls)
+	}
+
+	untrustedDispatcher := &fakeDispatcher{result: mcp.NewToolResultText(
+		`{"review_pending":true,"message":"no id"}`,
+	)}
+	untrustedPipeline, _ := newTestPipelineWithOptions(
+		t,
+		untrustedDispatcher,
+		[]Rule{allowedRule()},
+		WithApprovalTracker(tracker),
+	)
+	if _, err := untrustedPipeline.Invoke(context.Background(), Request{
+		CallID:    "call-review-untracked",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":""}`),
+	}); err != nil {
+		t.Fatalf("untrusted Invoke() error = %v", err)
+	}
+	if len(tracker.Calls()) != 1 {
+		t.Fatalf("unknown correlation was tracked: %+v", tracker.Calls())
+	}
+}
+
+func TestPipelineReviewPendingRejectsConflictingApprovalIDs(t *testing.T) {
+	dispatcher := &fakeDispatcher{result: &mcp.CallToolResult{Content: []mcp.Content{
+		mcp.NewTextContent(`{"review_pending":true,"approval_id":"approval-one"}`),
+		mcp.NewTextContent(`{"review_pending":true,"approval_id":"approval-two"}`),
+	}}}
+	pipeline, _ := newTestPipeline(t, dispatcher, allowedRule())
+
+	outcome, err := pipeline.Invoke(context.Background(), Request{
+		CallID:    "call-review-conflict",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if outcome.Call.Status != toolcall.StatusApprovalPending {
+		t.Fatalf("call = %+v, want approval_pending", outcome.Call)
+	}
+	if outcome.Approval == nil || outcome.Approval.Correlation != approval.CorrelationConflict || outcome.Approval.ID != "" {
+		t.Fatalf("approval reference = %+v, want conflict without a selected ID", outcome.Approval)
+	}
+}
+
+func TestPipelineReviewPendingRejectsInvalidApprovalExpiry(t *testing.T) {
+	dispatcher := &fakeDispatcher{result: mcp.NewToolResultStructured(map[string]any{
+		"review_pending": true,
+		"approval_id":    "approval-123",
+		"expires_at":     "not-a-time",
+	}, "pending")}
+	pipeline, _ := newTestPipeline(t, dispatcher, allowedRule())
+
+	outcome, err := pipeline.Invoke(context.Background(), Request{
+		CallID:    "call-review-invalid-expiry",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if outcome.Approval == nil || outcome.Approval.Correlation != approval.CorrelationConflict || outcome.Approval.ID != "" {
+		t.Fatalf("approval reference = %+v, want conflict", outcome.Approval)
+	}
 }
 
 func TestPipelineBlocksAllowedDecisionWithoutExplicitEffect(t *testing.T) {
@@ -376,6 +586,33 @@ type dispatchedCall struct {
 	Request  mcp.CallToolRequest
 }
 
+type trackedApproval struct {
+	CallID    string
+	Reference approval.Reference
+}
+
+type fakeApprovalTracker struct {
+	mu    sync.Mutex
+	calls []trackedApproval
+	err   error
+}
+
+func (f *fakeApprovalTracker) Track(callID string, reference approval.Reference) (approval.Tracked, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, trackedApproval{CallID: callID, Reference: reference})
+	if f.err != nil {
+		return approval.Tracked{}, f.err
+	}
+	return approval.Tracked{}, nil
+}
+
+func (f *fakeApprovalTracker) Calls() []trackedApproval {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]trackedApproval(nil), f.calls...)
+}
+
 func (f *fakeDispatcher) CallTool(_ context.Context, serverID string, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -399,13 +636,22 @@ func allowedRule() Rule {
 }
 
 func newTestPipeline(t *testing.T, dispatcher Dispatcher, rules ...Rule) (*Pipeline, *eventlog.Journal) {
+	return newTestPipelineWithOptions(t, dispatcher, rules, nil)
+}
+
+func newTestPipelineWithOptions(
+	t *testing.T,
+	dispatcher Dispatcher,
+	rules []Rule,
+	option Option,
+) (*Pipeline, *eventlog.Journal) {
 	t.Helper()
 	policy, err := NewAllowlistPolicy(rules...)
 	if err != nil {
 		t.Fatalf("NewAllowlistPolicy() error = %v", err)
 	}
 	journal := eventlog.New()
-	pipeline, err := New(policy, dispatcher, journal)
+	pipeline, err := New(policy, dispatcher, journal, option)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

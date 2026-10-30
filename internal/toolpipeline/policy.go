@@ -15,11 +15,11 @@ import (
 const defaultMaxArgumentsBytes = 1 << 20
 
 type Rule struct {
-	ServerID  string
-	ToolName  string
-	Effect    toolcall.Effect
-	Arguments json.RawMessage
-	Reason    string
+	ServerID  string          `json:"server_id"`
+	ToolName  string          `json:"tool_name"`
+	Effect    toolcall.Effect `json:"effect"`
+	Arguments json.RawMessage `json:"arguments"`
+	Reason    string          `json:"reason,omitempty"`
 }
 
 type AllowlistPolicy struct {
