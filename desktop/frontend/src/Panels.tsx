@@ -1,7 +1,22 @@
 import { useMemo, useState } from "react";
 import { decideApproval } from "./api";
-import { agentStateLabel, coreOwnershipLabel, coreStateLabel, executionStateLabel, mcpStateLabel, messages } from "./i18n";
-import type { AgentSessionSnapshot, Bootstrap } from "./types";
+import {
+  agentStateLabel,
+  approvalStateLabel,
+  coreOwnershipLabel,
+  coreStateLabel,
+  executionStateLabel,
+  mcpStateLabel,
+  messages,
+} from "./i18n";
+import type {
+  AgentSessionSnapshot,
+  ApprovalDecisionResult,
+  ApprovalStatus,
+  Bootstrap,
+  HarnessEvent,
+  TrackedApproval,
+} from "./types";
 
 function shortID(value?: string): string {
   if (!value) return messages.common.unknown;
@@ -20,13 +35,6 @@ function formatTime(value?: string): string {
   }).format(date);
 }
 
-function preferredSession(sessions: AgentSessionSnapshot[]): AgentSessionSnapshot | undefined {
-  return sessions.find((session) => session.state === "waiting_approval") ??
-    sessions.find((session) => session.state === "waiting_execution") ??
-    sessions.find((session) => session.state === "running") ??
-    sessions[0];
-}
-
 function stateClass(state: string): string {
   if (state === "completed" || state === "succeeded" || state === "running") return "ready";
   if (state === "failed" || state === "blocked" || state === "expired") return "danger";
@@ -34,7 +42,31 @@ function stateClass(state: string): string {
   return "unknown";
 }
 
-export function SessionsPanel({ data }: { data: Bootstrap }) {
+function eventBelongsToSession(event: HarnessEvent, session: AgentSessionSnapshot): boolean {
+  return event.subject_id === session.id ||
+    Boolean(session.current_approval_id && event.subject_id === session.current_approval_id) ||
+    Boolean(session.current_call_id && event.correlation_id === session.current_call_id);
+}
+
+function approvalBelongsToSession(approval: TrackedApproval, session: AgentSessionSnapshot): boolean {
+  if (approval.request.id === session.current_approval_id) return true;
+  if (approval.request.call_id && approval.request.call_id === session.current_call_id) return true;
+  return approval.reference.correlation === "trusted" &&
+    Boolean(session.core_session_id) &&
+    approval.reference.session_id === session.core_session_id;
+}
+
+export function SessionsPanel({
+  data,
+  selectedSessionId,
+  onSelectSession,
+  stale,
+}: {
+  data: Bootstrap;
+  selectedSessionId?: string;
+  onSelectSession: (sessionId: string) => void;
+  stale: boolean;
+}) {
   const sessions = data.agent_sessions.sessions;
   const counts = {
     running: sessions.filter((session) => session.state === "running").length,
@@ -43,6 +75,7 @@ export function SessionsPanel({ data }: { data: Bootstrap }) {
   };
   return (
     <div className="canvas-module sessions-module">
+      {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
       <div className="canvas-summary-row">
         <span><i className="status-dot ready" />运行中 <strong>{counts.running}</strong></span>
         <span><i className="status-dot warning" />待处理 <strong>{counts.waiting}</strong></span>
@@ -53,15 +86,25 @@ export function SessionsPanel({ data }: { data: Bootstrap }) {
       ) : (
         <ul className="canvas-list session-list">
           {sessions.map((session) => (
-            <li key={session.id}>
-              <div className="canvas-list-row">
-                <strong title={session.id}>{shortID(session.id)}</strong>
-                <span className={`state-badge ${stateClass(session.state)}`}>{agentStateLabel(session.state)}</span>
-              </div>
-              <div className="canvas-meta">
-                <span>{session.current_call_id ? `call ${shortID(session.current_call_id)}` : messages.common.none}</span>
-                <span>{session.current_execution ? executionStateLabel(session.current_execution.state) : messages.common.notRecorded}</span>
-              </div>
+            <li key={session.id} className={session.id === selectedSessionId ? "is-selected" : ""}>
+              <button
+                type="button"
+                className="session-select-button"
+                aria-pressed={session.id === selectedSessionId}
+                onClick={() => onSelectSession(session.id)}
+              >
+                <div className="canvas-list-row">
+                  <strong title={session.id}>
+                    {session.id === selectedSessionId ? <i className="context-current-dot" aria-hidden="true" /> : null}
+                    {shortID(session.id)}
+                  </strong>
+                  <span className={`state-badge ${stateClass(session.state)}`}>{agentStateLabel(session.state)}</span>
+                </div>
+                <div className="canvas-meta">
+                  <span>{session.current_call_id ? `call ${shortID(session.current_call_id)}` : messages.common.none}</span>
+                  <span>{session.current_execution ? executionStateLabel(session.current_execution.state) : messages.common.notRecorded}</span>
+                </div>
+              </button>
             </li>
           ))}
         </ul>
@@ -70,13 +113,21 @@ export function SessionsPanel({ data }: { data: Bootstrap }) {
   );
 }
 
-export function AgentPanel({ data }: { data: Bootstrap }) {
-  const session = preferredSession(data.agent_sessions.sessions);
+export function AgentPanel({
+  data,
+  session,
+  stale,
+}: {
+  data: Bootstrap;
+  session?: AgentSessionSnapshot;
+  stale: boolean;
+}) {
   const relatedEvents = data.events.events.filter((event) =>
-    session && (event.subject_id === session.id || event.correlation_id === session.current_call_id),
+    session && eventBelongsToSession(event, session),
   ).slice(-8);
   return (
     <div className="canvas-module agent-module">
+      {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
       {!session ? (
         <p className="canvas-empty">{messages.agent.emptyBody}</p>
       ) : (
@@ -90,7 +141,7 @@ export function AgentPanel({ data }: { data: Bootstrap }) {
           </div>
           <dl className="canvas-facts">
             <div><dt>Call</dt><dd>{shortID(session.current_call_id)}</dd></div>
-            <div><dt>Approval</dt><dd>{session.current_approval_status ?? messages.common.none}</dd></div>
+            <div><dt>Approval</dt><dd>{session.current_approval_status ? approvalStateLabel(session.current_approval_status) : messages.common.none}</dd></div>
             <div><dt>Tool</dt><dd>{session.current_tool_status ?? messages.common.none}</dd></div>
             <div><dt>Completion</dt><dd>{session.current_completion ?? messages.common.notRecorded}</dd></div>
             <div><dt>Execution</dt><dd>{session.current_execution ? executionStateLabel(session.current_execution.state) : messages.common.none}</dd></div>
@@ -114,21 +165,50 @@ export function AgentPanel({ data }: { data: Bootstrap }) {
 
 export function ApprovalsPanel({
   data,
+  session,
+  sessionId,
+  stale,
   canDecide,
   onChanged,
 }: {
   data: Bootstrap;
+  session?: AgentSessionSnapshot;
+  sessionId?: string;
+  stale: boolean;
   canDecide: boolean;
   onChanged: () => Promise<void>;
 }) {
-  const approvals = data.approvals.approvals;
-  const [deciding, setDeciding] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState<{
+    id: string;
+    decision: "approve" | "reject";
+  } | null>(null);
+  const [receipts, setReceipts] = useState<Record<string, {
+    outcome: ApprovalDecisionResult["outcome"];
+    status: ApprovalStatus;
+    revision: number;
+  }>>({});
+  const [showAllOverride, setShowAllOverride] = useState<boolean | null>(null);
   const [error, setError] = useState<{ message: string; detail?: string } | null>(null);
+  const showAll = showAllOverride ?? !session;
+  const approvals = useMemo(
+    () => showAll || !session
+      ? data.approvals.approvals
+      : data.approvals.approvals.filter((approval) => approvalBelongsToSession(approval, session)),
+    [data.approvals.approvals, session, showAll],
+  );
   const submit = async (id: string, revision: number, decision: "approve" | "reject") => {
-    setDeciding(id);
+    setDeciding({ id, decision });
     setError(null);
     try {
       const result = await decideApproval(id, revision, decision);
+      setReceipts((current) => ({
+        ...current,
+        [id]: {
+          outcome: result.outcome,
+          status: result.outcome === "unknown" ? "unknown" : result.approval.status,
+          revision: result.approval.revision,
+        },
+      }));
       if (result.outcome === "unknown") {
         setError({ message: messages.agent.decisionUnknown });
       } else if (result.warning) {
@@ -136,8 +216,12 @@ export function ApprovalsPanel({
       }
       await onChanged();
     } catch (reason) {
+      setReceipts((current) => ({
+        ...current,
+        [id]: { outcome: "unknown", status: "unknown", revision },
+      }));
       setError({
-        message: messages.agent.decisionFailed,
+        message: messages.agent.decisionUnknown,
         detail: reason instanceof Error ? reason.message : String(reason),
       });
     } finally {
@@ -146,10 +230,20 @@ export function ApprovalsPanel({
   };
   return (
     <div className="canvas-module approvals-module">
+      <p className="canvas-note">{messages.agent.approvalSnapshot}</p>
+      {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
       {data.approvals.correlation_capability === "unverified" ? (
         <p className="canvas-warning">{messages.agent.approvalCapabilityUnverified}</p>
       ) : null}
       {!canDecide ? <p className="canvas-warning">{messages.agent.approvalDisabled}</p> : null}
+      {sessionId ? (
+        <div className="approval-filter-row">
+          <strong>{showAll ? messages.agent.approvalAll : messages.agent.approvalRelated}</strong>
+          <button type="button" onClick={() => setShowAllOverride(!showAll)}>
+            {showAll ? messages.agent.approvalShowRelated : messages.agent.approvalShowAll}
+          </button>
+        </div>
+      ) : null}
       {error ? (
         <div className="canvas-error" role="alert">
           <strong>{error.message}</strong>
@@ -157,41 +251,77 @@ export function ApprovalsPanel({
         </div>
       ) : null}
       {approvals.length === 0 ? (
-        <p className="canvas-empty">{messages.agent.approvalsEmpty}</p>
+        <p className="canvas-empty">
+          {sessionId && !showAll ? messages.agent.approvalNoRelated : messages.agent.approvalsEmpty}
+        </p>
       ) : (
         <ul className="canvas-list approval-list">
-          {approvals.map((approval) => (
-            <li key={approval.request.id} className={approval.request.status === "pending" ? "needs-attention" : ""}>
-              <div className="canvas-list-row">
-                <strong title={approval.request.id}>{shortID(approval.request.id)}</strong>
-                <span className={`state-badge ${stateClass(approval.request.status)}`}>{approval.request.status}</span>
-              </div>
-              <p>{approval.reference.summary?.trim() || messages.agent.noSummary}</p>
-              <div className="canvas-meta">
-                <span>call {shortID(approval.request.call_id)}</span>
-                <span>revision {approval.request.revision}</span>
-                {approval.request.execution ? <span>{executionStateLabel(approval.request.execution.state)}</span> : null}
-              </div>
-              {approval.request.status === "pending" && canDecide && approval.reference.summary?.trim() ? (
-                <div className="approval-actions">
-                  <button type="button" className="approval-reject" disabled={deciding !== null} onClick={() => void submit(approval.request.id, approval.request.revision, "reject")}>
-                    {messages.agent.reject}
-                  </button>
-                  <button type="button" className="approval-approve" disabled={deciding !== null} onClick={() => void submit(approval.request.id, approval.request.revision, "approve")}>
-                    {deciding === approval.request.id ? messages.agent.deciding : messages.agent.approve}
-                  </button>
+          {approvals.map((approval) => {
+            const receipt = receipts[approval.request.id];
+            const status = receipt?.outcome === "unknown"
+              ? "unknown"
+              : receipt && receipt.revision >= approval.request.revision
+                ? receipt.status
+                : approval.request.status;
+            const receiptKind = receipt?.outcome === "unknown"
+              ? "unknown"
+              : receipt && receipt.revision >= approval.request.revision
+                ? "confirmed"
+                : "snapshot";
+            const submitting = deciding?.id === approval.request.id;
+            return (
+              <li key={approval.request.id} className={status === "pending" ? "needs-attention" : ""}>
+                <div className="canvas-list-row">
+                  <strong title={approval.request.id}>{shortID(approval.request.id)}</strong>
+                  <span className={`state-badge ${stateClass(status)}`}>{approvalStateLabel(status)}</span>
                 </div>
-              ) : null}
-            </li>
-          ))}
+                <p>{approval.reference.summary?.trim() || messages.agent.noSummary}</p>
+                <div className="canvas-meta">
+                  <span>call {shortID(approval.request.call_id)}</span>
+                  <span>revision {approval.request.revision}</span>
+                  {approval.request.execution ? <span>{executionStateLabel(approval.request.execution.state)}</span> : null}
+                </div>
+                <div className={`approval-receipt ${receiptKind}`}>
+                  {receiptKind === "confirmed"
+                    ? messages.agent.approvalReceiptConfirmed
+                    : receiptKind === "unknown"
+                      ? messages.agent.approvalReceiptUnknown
+                      : messages.agent.approvalReceiptSnapshot}
+                </div>
+                {status === "pending" && canDecide && approval.reference.summary?.trim() ? (
+                  <div className="approval-actions">
+                    <button
+                      type="button"
+                      className="approval-reject"
+                      disabled={deciding !== null}
+                      onClick={() => void submit(approval.request.id, approval.request.revision, "reject")}
+                    >
+                      {submitting && deciding.decision === "reject"
+                        ? messages.agent.approvalSubmittingReject
+                        : messages.agent.reject}
+                    </button>
+                    <button
+                      type="button"
+                      className="approval-approve"
+                      disabled={deciding !== null}
+                      onClick={() => void submit(approval.request.id, approval.request.revision, "approve")}
+                    >
+                      {submitting && deciding.decision === "approve"
+                        ? messages.agent.approvalSubmittingApprove
+                        : messages.agent.approve}
+                    </button>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
   );
 }
 
-export function TerminalPanel({ data }: { data: Bootstrap }) {
-  const session = preferredSession(data.agent_sessions.sessions);
+export function TerminalPanel({ session, stale }: { session?: AgentSessionSnapshot; stale: boolean }) {
   return (
     <div className="canvas-module terminal-module">
       <div className="terminal-placeholder">
@@ -199,7 +329,7 @@ export function TerminalPanel({ data }: { data: Bootstrap }) {
         <div>
           <strong>Terminal 数据通道尚未接入</strong>
           <p>布局位置已保留。后续通过 Core WebSocket 接入保序 PTY 字节流。</p>
-          <code>{session?.core_session_id ?? "等待可信 Core Session"}</code>
+          <code>{stale ? `${messages.context.stale} · ` : ""}{session?.core_session_id ?? "等待可信 Core Session"}</code>
         </div>
       </div>
     </div>
@@ -238,14 +368,37 @@ export function MCPPanel({ data }: { data: Bootstrap }) {
   );
 }
 
-export function ActivityPanel({ data }: { data: Bootstrap }) {
+export function ActivityPanel({
+  data,
+  session,
+  stale,
+}: {
+  data: Bootstrap;
+  session?: AgentSessionSnapshot;
+  stale: boolean;
+}) {
   const [filter, setFilter] = useState<"all" | "control" | "diagnostic">("all");
+  const [showAllContext, setShowAllContext] = useState(false);
   const events = useMemo(
-    () => data.events.events.filter((event) => filter === "all" || event.class === filter).slice(-80).reverse(),
-    [data.events.events, filter],
+    () => data.events.events
+      .filter((event) => filter === "all" || event.class === filter)
+      .filter((event) => !session || showAllContext || eventBelongsToSession(event, session))
+      .slice(-80)
+      .reverse(),
+    [data.events.events, filter, session, showAllContext],
   );
   return (
     <div className="canvas-module activity-module">
+      {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
+      <p className="canvas-note">{messages.ledger.sequenceNote}</p>
+      <div className="activity-context-tools">
+        <span>{session ? (showAllContext ? "显示全部事件" : "仅显示当前 Session 的可信关联事件") : "未绑定 Session，显示全部事件"}</span>
+        {session ? (
+          <button type="button" onClick={() => setShowAllContext((current) => !current)}>
+            {showAllContext ? "只看当前 Session" : "显示全部事件"}
+          </button>
+        ) : null}
+      </div>
       <div className="canvas-tabs compact">
         {(["all", "control", "diagnostic"] as const).map((value) => (
           <button type="button" key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>
@@ -258,7 +411,14 @@ export function ActivityPanel({ data }: { data: Bootstrap }) {
           <li key={event.event_id}>
             <span className="event-sequence">{String(event.sequence).padStart(4, "0")}</span>
             <span>{formatTime(event.occurred_at)}</span>
-            <strong>{event.type}</strong>
+            <div className="event-main">
+              <strong>{event.type}</strong>
+              <small>
+                subject {shortID(event.subject_id)}
+                {" · "}
+                correlation {event.correlation_id ? shortID(event.correlation_id) : "关联未知"}
+              </small>
+            </div>
             <span className={`event-class ${event.class}`}>{event.class}</span>
           </li>
         ))}

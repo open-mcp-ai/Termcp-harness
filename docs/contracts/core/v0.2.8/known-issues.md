@@ -36,7 +36,7 @@
 
 ### CORE-0.2.8-001：审批过期未 fail-closed
 
-- 状态：**FIXED_LOCAL（Harness E2E 已验证）**
+- 状态：**FIXED_LOCAL（源码与本地重建实例均已验证；正式发布待同步）**
 - 严重度：**高，阻塞完整审批状态闭环**
 - 首次确认：2026-10-29
 - 本地修复：`f6cefec`，队列在 List/Get/Approve/Reject/Cancel 等路径先结算过期状态
@@ -57,7 +57,7 @@
 
 ### CORE-0.2.8-002：session 关闭后的 cancelled 状态不可查询
 
-- 状态：**FIXED_LOCAL（Harness E2E 已验证）**
+- 状态：**FIXED_LOCAL（源码与本地重建实例均已验证；正式发布待同步）**
 - 严重度：**中高，阻塞完整审批历史和状态展示**
 - 首次确认：2026-10-29
 - 本地修复：`f6cefec`，关闭 session 时原子关闭审批队列并保留只读历史
@@ -78,7 +78,7 @@
 
 ### CORE-0.2.8-003：review_pending 缺少 approval_id
 
-- 状态：**UPSTREAM_ACCEPTED（PR #226 已采纳；当前 Termcp 开发基线已包含关联契约，后续随 Termcp 发布流程同步）**
+- 状态：**UPSTREAM_ACCEPTED（PR #226 已采纳；源码关联测试、重建 Core 与真实 Desktop 闭环均已验证，正式发布待同步）**
 - 严重度：**高，阻塞工具调用与审批请求的可信关联**
 - 首次确认：2026-10-30
 - 上游 issue：<https://github.com/open-mcp-ai/Termcp/issues/236>
@@ -162,3 +162,40 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalSessionDeathStateCo
 - Harness 自身状态机、策略、事件日志和 UI 缺陷不登记为 Core 上游问题。
 - Core 尚未实现的能力应登记为能力缺口，不应写成“测试通过”。
 - Core 进程识别、PID、启动时间和所有权属于 Harness 的本地实例识别能力，不等同于审批契约问题。
+
+## 8. 运行中 Core 实例复验（2026-10-31）
+
+- 实例：`http://127.0.0.1:18765`，version `v0.2.8`，daemon PID 32124，启动时间 `2026-10-30T13:27:15Z`。
+- 真实 Core MCP：Streamable HTTP `http://127.0.0.1:18765/stream`，协议 `2025-11-25`，工具列表可用。
+- 通过：
+  - `TestTermcpCoreReadOnlyPipelineIntegration`
+  - `TestTermcpCoreConcurrentControlTraceIntegration`
+  - `TestTermcpCorePOSIXWriteEffectsIntegration`
+  - `TestTermcpCoreOutputFloodIntegration`
+  - `TestTermcpCoreCancellationIntegration`
+  - `TestTermcpCorePOSIXTransportDisconnectIntegration`
+  - `TestTermcpCoreApprovalReviewIntegration`
+- 失败：
+  - `TestTermcpCoreApprovalExpiryContract`：过期审批仍返回 `200` 并被实际执行，运行中实例尚未包含 `CORE-0.2.8-001` 的本地修复。
+  - `TestTermcpCoreApprovalSessionDeathStateContract`：关闭 Session 后审批未进入可查询的 `cancelled`，运行中实例尚未包含 `CORE-0.2.8-002` 的本地修复。
+- 审批关联：Harness 控制 API 返回 `correlation_capability=unverified`；Core 队列存在 pending 审批，但工具结果没有可信 `approval_id`，Desktop 因此不显示批准/拒绝入口。这符合 `CORE-0.2.8-003` 的 fail-closed 策略，不代表审批 UI 操作已验证通过。
+- 真实 Desktop：Wails 成功连接 Harness 与 Core，读取真实 Agent Session、事件、MCP 1/1 就绪和等待审批状态；Session 跟随/锁定、关联未知、后台任务计数、关闭面板不停止 Core Session 均按契约显示。生产版可执行文件在清理后复测可正常启动并暴露 `Termcp Harness` 窗口。
+- Terminal UI：Canvas 明确显示“数据通道尚未接入”；本次验证的是 Core/MCP 终端工具执行，不是 Canvas 保序 PTY 字节流。
+- 清理：所有专用测试 Session 均为 `exited`，测试临时文件已确认不存在，临时 Harness 监听进程、一次性 token 和测试策略文件已清理；外部 Core PID 32124 未停止。
+
+## 9. 本地源码重建复验（2026-10-31）
+
+第 8 节记录的是旧安装二进制。当前工作区随后按原 daemon 方式重建并重启，验证结果如下。
+
+- 构建：`dev-f6cefec-dirty (commit f6cefec)`。
+- 安装位置：`C:\Users\miles\.termcp\versions\v0.2.8\termcp.exe`。
+- 旧二进制备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-approval-correlation`。
+- 运行方式：`termcp daemon start --host 127.0.0.1 --port 18765 --data-dir C:\Users\miles\.termcp --assets C:\Users\miles\.termcp\assets --log-level info --idle-timeout 30s`。
+- 运行实例：PID 23424，`daemon=true`，`idle_timeout_ms=30000`。
+- `TestTermcpCoreApprovalExpiryContract`：通过；过期审批不能再执行。
+- `TestTermcpCoreApprovalSessionDeathStateContract`：通过；Session 关闭后审批可查询为 `cancelled`。
+- 审批关联：Harness 返回 `correlation_capability=trusted`，pending 结果包含可信 `approval_id`、`session_id` 和 `expires_at`。
+- 真实 Desktop 正向闭环：点击批准后，服务端确认 `approved`、执行结果 `succeeded`、Agent Session `completed`；远程临时文件回读为预期测试内容。
+- 真实 Desktop 过期路径：审批超时后点击批准得到服务端 `expired`，未执行写入，UI 显示“已过期”和“服务端已确认”。
+- 本轮还修复了 Harness 前端在 Runtime 实例重启后仅比较事件 `latest_sequence`、导致新实例低序号快照被丢弃的问题；现在只有 `runtime.instance_id` 相同时才拒绝倒退序号。
+- 发布边界：`approval_id` 关联改动仍在 Core 工作区，尚未提交或进入正式发布；当前验证对象是 `f6cefec-dirty`，不能据此宣称正式 v0.2.8 发布包已包含全部修复。

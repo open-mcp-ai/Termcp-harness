@@ -19,6 +19,19 @@ const zhCN = {
     notRecorded: "未记录",
     none: "无",
   },
+  context: {
+    session: "Session",
+    follow: "跟随当前",
+    pinned: "已锁定",
+    unbound: "未绑定任务",
+    missing: "关联未知",
+    stale: "最后快照",
+    lock: "锁定当前",
+    followCurrent: "改为跟随",
+    noSession: "当前没有可锁定的 Session",
+    panelScope: "面板上下文",
+    authoritative: "状态以 Harness Runtime 回执为准",
+  },
   window: {
     controls: "窗口控制",
     minimise: "最小化",
@@ -200,8 +213,18 @@ const zhCN = {
     approvalDisabled: "Desktop 未配置审批 token 文件，本次仅显示审批状态。",
     approvalCapabilityUnverified: "尚未观察到可信 approval_id，审批关联能力仍未验证。",
     noSummary: "没有可显示的审批摘要，请勿盲批。",
+    approvalSnapshot: "审批状态来自 Harness Runtime 快照；按钮提交后仍需等待服务端确认。",
+    approvalRelated: "当前 Session 的可信关联审批",
+    approvalAll: "全部审批",
+    approvalNoRelated: "当前 Session 没有可信关联审批。",
+    approvalShowAll: "查看全部审批",
+    approvalShowRelated: "只看当前 Session",
+    approvalReceiptConfirmed: "服务端已确认",
+    approvalReceiptUnknown: "服务端结果未知",
+    approvalReceiptSnapshot: "服务端快照",
+    approvalSubmittingApprove: "正在提交批准…",
+    approvalSubmittingReject: "正在提交拒绝…",
     decisionUnknown: "审批结果未知：请求可能已提交，请勿重复操作。",
-    decisionFailed: "审批操作失败，请稍后重试。",
     decisionWarning: "审批状态已确认，但运行记录写入失败。",
     lastKnownNote: "Harness Runtime 当前不可达。以下 Session 和审批状态可能已经过期。",
   },
@@ -222,6 +245,15 @@ const zhCN = {
     submitted: "已提交输入",
     succeeded: "执行成功",
     failed: "执行失败",
+    unknown: "结果未知",
+  },
+  approvalState: {
+    pending: "待审批",
+    submitting: "提交中",
+    approved: "已批准",
+    rejected: "已拒绝",
+    expired: "已过期",
+    cancelled: "已取消",
     unknown: "结果未知",
   },
   loading: {
@@ -259,4 +291,8 @@ export function agentStateLabel(value: string): string {
 
 export function executionStateLabel(value: string): string {
   return messages.executionState[value as keyof typeof messages.executionState] ?? value;
+}
+
+export function approvalStateLabel(value: string): string {
+  return messages.approvalState[value as keyof typeof messages.approvalState] ?? value;
 }

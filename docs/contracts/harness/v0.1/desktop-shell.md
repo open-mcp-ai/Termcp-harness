@@ -1,6 +1,6 @@
 # Terminal Workspace Shell v0.1（草案）
 
-> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察和审批决定已实现；Harness Canvas 初版 PoC 已实现；标签合并、真实终端交互和实时订阅尚未实现。
+> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察、审批决定和 Harness Canvas 初版 PoC 已实现；面板跨 Session 上下文跟随/锁定、关闭视图提示和服务端审批回执已接入前端；真实终端交互、实时订阅和 Workspace 导入导出尚未实现。
 >
 > 实现：`desktop/`
 
@@ -62,10 +62,15 @@ http://127.0.0.1:8787
 
 ## 5. 当前界面
 
-- 左侧固定 Rail：事件时间线、Harness Runtime、Termcp Core、MCP Server。
-- 中间事件带：本地 sequence、时间、类型、subject/correlation、class 筛选和可展开载荷。
-- 右侧事实检查器：Agent Session、关联审批及摘要、Harness Runtime 生命周期、Core 身份和 MCP 状态。
+- 轻量 Shell + Harness Canvas：Workspace 模板、模块抽屉、停靠面板、标签合并和布局恢复。
+- Workspace 顶部选择当前 Agent Session，并持续显示运行中、等待审批和等待执行的后台任务数量。
+- Agent、审批、Terminal 和 Activity 面板显示“跟随当前”“已锁定”或“关联未知”；锁定目标随布局持久化，切换 Session 时不会静默改绑。
+- 面板关闭明确提示关联任务、Session 和审批不会停止；关闭审批详情不代表拒绝或取消。
+- Canvas 状态使用 schema v2，面板 ID 与模块上下文分别保存，并兼容旧版布局数据。
+- Activity 显示本地 sequence、时间、类型、subject/correlation、class 筛选；缺少关联 ID 时显示“关联未知”。
+- Agent Session、关联审批及摘要、Harness Runtime 生命周期、Core 身份和 MCP 状态由 Canvas 模块呈现。
 - 待处理审批在可信摘要存在且 token 已加载时提供“批准/拒绝”；提交期间禁用按钮，结果未知明确要求不要重复操作。
+- 审批提交中、服务端确认和结果未知分别表达；只有可信服务端回执才更新审批终态。当前 UI 仍通过轮询快照收敛。
 - 不可达时顶部状态为“状态未知”，Harness Runtime、Core、MCP 和事件流统一标记为“最后快照”。
 - 保留快照中的“运行中”“就绪”只作为最后已知值，并附带过期说明，不作为当前状态。
 - 首次启动即不可达时显示明确空态，不再保留“正在读取”加载提示。

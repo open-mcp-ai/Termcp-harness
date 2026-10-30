@@ -154,14 +154,18 @@ Activity 面板统一承载：
 - 轻量 Shell：Workspace 切换、模块抽屉、命令入口、全局状态和窗口控制。
 - 四个 Workspace 模板及自定义模板。
 - 12 列停靠网格中的面板拖动、缩放、最大化、关闭和键盘移动。
+- 拖到面板标题合并为标签组、拖到边缘分栏及落点预览。
+- 标签切换和关闭单个标签；关闭最后一个标签才移除面板容器。
 - 面板关闭后的重建与模板恢复。
-- 本机布局持久化。
+- 本机布局与选中 Session 持久化；Canvas 状态使用 schema v2，并兼容旧布局读取。
+- Agent、审批、Terminal 和 Activity 面板支持跟随当前 Session、锁定 Session 与关联未知状态；标签合并保留各模块上下文。
+- 关闭面板时明确提示任务和审批未停止，Workspace 持续显示后台活动任务数量。
+- 审批提交、服务端确认和结果未知分开表达；Activity 显示 subject/correlation，不以缺失关联推断当前任务。
 - Sessions、Agent Session、Approval、Terminal 占位、MCP、Activity 和 Diagnostics 面板。
 - 面板、模块和任务生命周期分离的界面文案与恢复边界。
 
 尚未实现：
 
-- 面板标签合并与拖拽分栏预览。
 - Workspace 导入导出、撤销历史和版本迁移。
 - 真实 Terminal WebSocket 字节流。
 - 第三方模块贡献协议与动态面板注册。
