@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 )
 
 // State is the local lifecycle state of a Harness Runtime instance. It does
@@ -42,9 +44,18 @@ type Runtime struct {
 	startedAt  *time.Time
 	stoppedAt  *time.Time
 	now        func() time.Time
+	events     *eventlog.Journal
 }
 
-func New(version string) (*Runtime, error) {
+type Option func(*Runtime)
+
+func WithEventLog(journal *eventlog.Journal) Option {
+	return func(r *Runtime) {
+		r.events = journal
+	}
+}
+
+func New(version string, options ...Option) (*Runtime, error) {
 	if version == "" {
 		version = "dev"
 	}
@@ -54,12 +65,16 @@ func New(version string) (*Runtime, error) {
 		return nil, fmt.Errorf("create runtime instance ID: %w", err)
 	}
 
-	return &Runtime{
+	runtime := &Runtime{
 		instanceID: instanceID,
 		version:    version,
 		state:      StateNew,
 		now:        time.Now,
-	}, nil
+	}
+	for _, option := range options {
+		option(runtime)
+	}
+	return runtime, nil
 }
 
 func (r *Runtime) Start() error {
@@ -68,6 +83,9 @@ func (r *Runtime) Start() error {
 
 	if r.state != StateNew {
 		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, r.state, StateRunning)
+	}
+	if err := r.record(eventlog.TypeRuntimeStarted); err != nil {
+		return err
 	}
 
 	now := r.now().UTC()
@@ -84,6 +102,9 @@ func (r *Runtime) MarkStopping() error {
 	if r.state != StateRunning {
 		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, r.state, StateStopping)
 	}
+	if err := r.record(eventlog.TypeRuntimeStopping); err != nil {
+		return err
+	}
 
 	r.state = StateStopping
 	return nil
@@ -95,6 +116,9 @@ func (r *Runtime) Stop() error {
 
 	if r.state != StateStopping {
 		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, r.state, StateStopped)
+	}
+	if err := r.record(eventlog.TypeRuntimeStopped); err != nil {
+		return err
 	}
 
 	now := r.now().UTC()
@@ -134,4 +158,19 @@ func newInstanceID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value[:]), nil
+}
+
+func (r *Runtime) record(eventType eventlog.Type) error {
+	if r.events == nil {
+		return nil
+	}
+	_, err := r.events.Append(eventlog.Entry{
+		Type:      eventType,
+		Class:     eventlog.ClassControl,
+		SubjectID: r.instanceID,
+	})
+	if err != nil {
+		return fmt.Errorf("record %s event: %w", eventType, err)
+	}
+	return nil
 }

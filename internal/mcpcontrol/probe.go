@@ -41,23 +41,26 @@ type ProbeOptions struct {
 	MaxSchemaBytes int
 }
 
-type probeClient interface {
+type clientConnection interface {
 	Start(context.Context) error
 	Initialize(context.Context, mcp.InitializeRequest) (*mcp.InitializeResult, error)
 	ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
+	OnNotification(func(mcp.JSONRPCNotification))
 	Close() error
 }
 
-type probeClientFactory func(string) (probeClient, error)
+type clientFactory func(string) (clientConnection, error)
 
 type Prober struct {
-	factory probeClientFactory
+	factory clientFactory
 }
 
 func NewProber() *Prober {
-	return &Prober{factory: func(endpoint string) (probeClient, error) {
-		return client.NewStreamableHttpClient(endpoint)
-	}}
+	return &Prober{factory: defaultClientFactory}
+}
+
+func defaultClientFactory(endpoint string) (clientConnection, error) {
+	return client.NewStreamableHttpClient(endpoint)
 }
 
 func (p *Prober) Probe(ctx context.Context, options ProbeOptions) (Observation, error) {
@@ -124,39 +127,9 @@ func (p *Prober) Probe(ctx context.Context, options ProbeOptions) (Observation, 
 		return observation, nil
 	}
 
-	listed, err := mcpClient.ListTools(probeContext, mcp.ListToolsRequest{})
+	observation.Tools, err = readTools(probeContext, mcpClient, options.MaxTools, options.MaxSchemaBytes)
 	if err != nil {
-		return Observation{}, fmt.Errorf("list MCP tools: %w", err)
-	}
-	if len(listed.Tools) > options.MaxTools {
-		return Observation{}, fmt.Errorf("MCP tool count %d exceeds limit %d", len(listed.Tools), options.MaxTools)
-	}
-
-	seen := make(map[string]struct{}, len(listed.Tools))
-	totalSchemaBytes := 0
-	observation.Tools = make([]ToolDescriptor, 0, len(listed.Tools))
-	for _, tool := range listed.Tools {
-		if tool.Name == "" {
-			return Observation{}, errors.New("MCP server returned a tool with an empty name")
-		}
-		if _, exists := seen[tool.Name]; exists {
-			return Observation{}, fmt.Errorf("MCP server returned duplicate tool name %q", tool.Name)
-		}
-		seen[tool.Name] = struct{}{}
-
-		encoded, err := json.Marshal(tool)
-		if err != nil {
-			return Observation{}, fmt.Errorf("encode schema for MCP tool %q: %w", tool.Name, err)
-		}
-		totalSchemaBytes += len(encoded)
-		if totalSchemaBytes > options.MaxSchemaBytes {
-			return Observation{}, fmt.Errorf("MCP tool schemas exceed limit %d bytes", options.MaxSchemaBytes)
-		}
-		observation.Tools = append(observation.Tools, ToolDescriptor{
-			Name:        tool.Name,
-			Description: tool.Description,
-			Schema:      encoded,
-		})
+		return Observation{}, err
 	}
 	return observation, nil
 }
@@ -169,4 +142,44 @@ func (o Observation) Capabilities() Capabilities {
 		ToolsSupported:  o.ToolsSupported,
 		ToolCount:       len(o.Tools),
 	}
+}
+
+func readTools(ctx context.Context, mcpClient interface {
+	ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error)
+}, maxTools, maxSchemaBytes int) ([]ToolDescriptor, error) {
+	listed, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("list MCP tools: %w", err)
+	}
+	if len(listed.Tools) > maxTools {
+		return nil, fmt.Errorf("MCP tool count %d exceeds limit %d", len(listed.Tools), maxTools)
+	}
+
+	seen := make(map[string]struct{}, len(listed.Tools))
+	totalSchemaBytes := 0
+	tools := make([]ToolDescriptor, 0, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		if tool.Name == "" {
+			return nil, errors.New("MCP server returned a tool with an empty name")
+		}
+		if _, exists := seen[tool.Name]; exists {
+			return nil, fmt.Errorf("MCP server returned duplicate tool name %q", tool.Name)
+		}
+		seen[tool.Name] = struct{}{}
+
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			return nil, fmt.Errorf("encode schema for MCP tool %q: %w", tool.Name, err)
+		}
+		totalSchemaBytes += len(encoded)
+		if totalSchemaBytes > maxSchemaBytes {
+			return nil, fmt.Errorf("MCP tool schemas exceed limit %d bytes", maxSchemaBytes)
+		}
+		tools = append(tools, ToolDescriptor{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Schema:      encoded,
+		})
+	}
+	return tools, nil
 }

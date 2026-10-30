@@ -10,6 +10,8 @@
 
 本版只提供 Harness Runtime 的本地生命周期与健康快照。它不包含 Session、MCP Server、工具调用、审批或 Core 状态，也不代表这些能力已经实现。
 
+事件补拉入口见 `event-log.md`；事件模型也已单独版本化。
+
 控制 API v1 当前只允许绑定回环地址。认证、远程访问、TLS、CORS 和第三方客户端兼容性均未设计；在这些边界完成前不得暴露到非回环网络。
 
 ## `GET /healthz`
@@ -45,6 +47,10 @@ Runtime 处于 `running` 时返回 `200`，其他生命周期状态返回 `503`�
 - `stopped`
 
 `failed` 已为未来失败收敛保留，本版控制 API 不会主动产生该状态。
+
+## `GET /v1/events`
+
+按 Harness 本地 `sequence` 补拉有界事件窗口。详细语义、容量、截断标记和 payload 限制见 `event-log.md`。
 
 ## 非目标
 

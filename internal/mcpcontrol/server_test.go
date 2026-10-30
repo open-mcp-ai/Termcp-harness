@@ -74,6 +74,18 @@ func TestReconnectRequiresCapabilityReload(t *testing.T) {
 	step(t, server, revision, func(revision Revision) (Snapshot, error) { return server.BeginCapabilityLoad(revision) })
 }
 
+func TestCapabilityChangeInvalidatesReadiness(t *testing.T) {
+	server := readyServer(t)
+	revision := server.Snapshot().Revision
+	step(t, server, revision, func(revision Revision) (Snapshot, error) {
+		return server.MarkCapabilitiesStale(revision)
+	})
+	snapshot := server.Snapshot()
+	if snapshot.Ready || snapshot.CapabilityState != CapabilitiesStale || snapshot.Enablement != EnablementEnabled {
+		t.Fatalf("stale capability snapshot = %+v", snapshot)
+	}
+}
+
 func TestStaleRevisionAndInvalidFailureAreRejected(t *testing.T) {
 	server := newServer(t, ManagementExternal)
 	if _, err := server.Register(99); !errors.Is(err, ErrStaleRevision) {

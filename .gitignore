@@ -3,6 +3,10 @@
 /dist/
 /termcp-harness
 /termcp-harness.exe
+/desktop/build/
+/desktop/frontend/node_modules/
+/desktop/frontend/package.json.md5
+/desktop/frontend/wailsjs/
 
 # Go test artifacts
 *.test

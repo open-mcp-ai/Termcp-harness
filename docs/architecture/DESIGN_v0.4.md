@@ -98,6 +98,8 @@ Terminal Workspace 不是：
 - 唯一控制入口。
 - 完整 SSH 管理器的自动复制品。
 
+当前已建立 Wails + React/TypeScript Desktop Shell，只读取 Runtime、MCP 注册和事件窗口；终端流、审批操作和安装包尚未接入。详见 `docs/contracts/harness/v0.1/desktop-shell.md`。
+
 ## 3. 稳定内核与开放边缘
 
 ### 3.1 稳定内核
@@ -209,7 +211,7 @@ Termcp Core 是其中一个 MCP Server，不是唯一的工具来源。Harness �
 - 连接成功不等于调用成功。
 - 没有执行证据时不得显示“已加载成功”或“运行正常”。
 
-当前本地注册表把登记、连接、能力、启用和所有权分开建模，见 `docs/contracts/harness/v0.1/mcp-server-states.md`。它只证明状态模型，不证明真实连接生命周期已完整接入 Runtime。
+当前本地 Host 已把真实 Streamable HTTP 连接、能力读取、启用/停用、断连和 `tools/list_changed` 失效接入 Runtime，并保持登记、连接、能力、启用和所有权分开建模，见 `docs/contracts/harness/v0.1/mcp-server-states.md`。认证、自动重连、SSE/stdio 和受管子进程仍未实现。
 
 ### 5.3 工具命名与隔离
 
@@ -330,6 +332,8 @@ Harness 的策略不能替代 Core 的服务端权限。UI 点击、按钮禁用
 - 明确记录的完整性和未知区段。
 - 保护凭据和敏感终端内容。
 - 不因 UI 重渲染或崩溃而丢失已提交事实。
+
+当前本地事件日志只提供内存内补拉窗口，顺序、容量和截断语义见 `docs/contracts/harness/v0.1/event-log.md`。持久化、实时订阅和跨重启恢复仍未实现。
 
 ### 8.3 上下文管理
 
