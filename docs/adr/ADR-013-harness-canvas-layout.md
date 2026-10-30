@@ -1,6 +1,6 @@
 # ADR-013：Harness Canvas 初版布局
 
-- 状态：Accepted / 初版界面模板已确认，实现待落地
+- 状态：Accepted / Canvas 初版 PoC 已实现，继续迭代
 - 日期：2026-10-31
 - 责任范围：Terminal Workspace、模块展示层与 Workspace 组合模型
 - 关联：`docs/adr/ADR-008-desktop-technology-stack.md`、`docs/adr/ADR-009-modular-composition.md`、`docs/adr/ADR-011-mcp-native-agent-runtime.md`、`docs/architecture/DESIGN_v0.4.md`
@@ -104,6 +104,12 @@ Activity 面板统一承载：
 
 不得用一个 `MCP 1/1` 同时代表不同层级。
 
+### 2.8 初版采用轻量白色主题
+
+- 初版以白色工作区、浅灰分层和蓝色主操作为主，降低首版视觉复杂度。
+- 终端内容区可以保持深色，但整体 Shell 和普通面板使用浅色主题。
+- 多主题、主题包和展示型主题插件不进入初版实现，后续通过模块和主题接口扩展。
+
 ## 3. 生命周期约束
 
 面板、模块和任务的生命周期必须分开：
@@ -140,3 +146,22 @@ Activity 面板统一承载：
 4. 实现四个内置 Workspace 模板和自定义模板。
 5. 实现模块抽屉、Workspace Recipe 导入导出和恢复。
 6. 最后接入 Terminal 与受控模块贡献协议。
+
+## 7. 初版 PoC 状态（2026-10-31）
+
+已实现：
+
+- 轻量 Shell：Workspace 切换、模块抽屉、命令入口、全局状态和窗口控制。
+- 四个 Workspace 模板及自定义模板。
+- 12 列停靠网格中的面板拖动、缩放、最大化、关闭和键盘移动。
+- 面板关闭后的重建与模板恢复。
+- 本机布局持久化。
+- Sessions、Agent Session、Approval、Terminal 占位、MCP、Activity 和 Diagnostics 面板。
+- 面板、模块和任务生命周期分离的界面文案与恢复边界。
+
+尚未实现：
+
+- 面板标签合并与拖拽分栏预览。
+- Workspace 导入导出、撤销历史和版本迁移。
+- 真实 Terminal WebSocket 字节流。
+- 第三方模块贡献协议与动态面板注册。

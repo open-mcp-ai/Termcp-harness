@@ -21,6 +21,7 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 - 真实审批闭环已通过：`term` 文件写入返回可信 `Approval-ID`，批准前文件不存在；批准后 Core 执行写入，Harness 自动消费 `execution=succeeded` 并完成 Session，审批、恢复、完成事件各一条。
 - 真实 Core 的调用取消已观测为本地 `unknown`，不能据此认定远端未执行；20,000 行输出和 12 路并发只读调用均通过，每个调用保留独立控制事件顺序。
 - 已建立 Wails + React/TypeScript Desktop Shell，展示真实 Harness Runtime、MCP Server 和事件时间线。
+- 已建立 Harness Canvas 初版 PoC：轻量 Shell、Workspace 模板、停靠网格中的面板拖动/缩放/最大化/关闭、模块抽屉、模板恢复和本机布局持久化；真实 Terminal、标签合并和 Workspace 导入导出仍待接入。
 - Desktop 默认简体中文，初始窗口 `1280×800`，采用深海军蓝与靛蓝信号色。
 - 控制 API 当前只允许绑定回环地址，详见 `docs/contracts/harness/v0.1/control-api.md`。
 - 工具调用状态机已通过 `internal/toolpipeline` 接入真实 MCP Host，当前仅支持显式 allowlist 下的同步调用；真实 Core 写测试只证明覆盖语义和 `unknown` 不自动重试，不证明 Core 支持 idempotency key。审批状态、受保护 CLI 决定、Session 结果观察和 Desktop 审批操作已接入；模型 Agent Loop 仍尚未接入。语义见 `docs/contracts/harness/v0.1/state-machines.md`。
