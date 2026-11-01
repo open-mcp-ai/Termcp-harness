@@ -39,6 +39,7 @@ export type ToolCompletionRequirement = "accepted" | "completed";
 export type AgentSessionState =
   | "new"
   | "running"
+  | "cancelling"
   | "waiting_approval"
   | "waiting_execution"
   | "completed"
@@ -242,8 +243,23 @@ export interface AgentSessionSnapshot {
   recovered?: boolean;
   recovery_reason?: string;
   model_loop_recovery?: ModelLoopRecoverySummary;
+  cancellation?: AgentCancellation;
   started_at?: string;
   finished_at?: string;
+}
+
+export type CancellationPhase =
+  | "before_dispatch"
+  | "model_request"
+  | "tool_dispatch"
+  | "waiting_approval"
+  | "waiting_execution";
+
+export interface AgentCancellation {
+  requested_at: string;
+  phase: CancellationPhase;
+  remote_outcome_unknown?: boolean;
+  approval_pending?: boolean;
 }
 
 export type ModelLoopRecoveryStage =
@@ -307,7 +323,7 @@ export interface AgentSessionTranscript {
   output?: string;
 }
 
-export type TerminalState = "connecting" | "connected" | "ended" | "unknown";
+export type TerminalState = "connecting" | "reconnecting" | "connected" | "ended" | "unknown";
 
 export interface TerminalShell {
   id: string;
@@ -343,6 +359,7 @@ export interface TerminalSnapshot {
   activity_source?: "api" | "ai";
   last_error?: string;
   dropped_output_bytes: number;
+  reconnect_attempts?: number;
   revision: number;
 }
 
@@ -374,6 +391,7 @@ export interface DesktopBridge {
   ReconcileApproval(id: string): Promise<ApprovalReconciliationResult>;
   StartModelLoop(coreSessionId: string, input: string, maxIterations: number, maxToolCalls: number): Promise<ModelLoopLaunchResult>;
   ResumeModelLoop(agentSessionId: string): Promise<ModelLoopLaunchResult>;
+  CancelAgentSession(id: string, expectedRevision: number): Promise<{ session: AgentSessionSnapshot }>;
   AgentSessionTranscript(id: string): Promise<{ transcript: AgentSessionTranscript }>;
   TerminalShells(agentSessionId: string): Promise<TerminalShellsResult>;
   TerminalOpen(agentSessionId: string, shellId: string, rows: number, cols: number): Promise<TerminalOpenResult>;

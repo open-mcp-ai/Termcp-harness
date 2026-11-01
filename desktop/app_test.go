@@ -213,12 +213,13 @@ func TestAppReconcilesUnknownApprovalWithoutExposingToken(t *testing.T) {
 func TestAppStartsModelLoopThroughFixedBridge(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	var sessionID string
+	loopCalled := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "Bearer "+token {
-			t.Errorf("authorization mismatch")
-		}
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/agent/sessions":
+			if request.Header.Get("Authorization") != "Bearer "+token {
+				t.Errorf("authorization mismatch")
+			}
 			var body map[string]any
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Errorf("decode create body: %v", err)
@@ -236,6 +237,9 @@ func TestAppStartsModelLoopThroughFixedBridge(t *testing.T) {
 		case request.Method == http.MethodPost &&
 			strings.HasPrefix(request.URL.Path, "/v1/agent/sessions/") &&
 			strings.HasSuffix(request.URL.Path, "/loop"):
+			if request.Header.Get("Authorization") != "Bearer "+token {
+				t.Errorf("authorization mismatch")
+			}
 			var body map[string]any
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Errorf("decode loop body: %v", err)
@@ -254,6 +258,7 @@ func TestAppStartsModelLoopThroughFixedBridge(t *testing.T) {
 					"call_id": "model-call-1", "status": "succeeded", "result_bytes": 16,
 				}},
 			})
+			close(loopCalled)
 		default:
 			http.NotFound(w, request)
 		}
@@ -270,10 +275,13 @@ func TestAppStartsModelLoopThroughFixedBridge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartModelLoop() error = %v", err)
 	}
-	if result.AgentSessionID != sessionID || result.Output != "finished" ||
-		result.Session.State != "completed" || result.Session.ModelTurns != 2 ||
-		len(result.Calls) != 1 || result.Calls[0].Status != "succeeded" {
+	if result.AgentSessionID != sessionID || result.Session.State != "new" || len(result.Calls) != 0 {
 		t.Fatalf("result = %+v", result)
+	}
+	select {
+	case <-loopCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async model loop was not started")
 	}
 }
 
@@ -299,26 +307,87 @@ func TestAppStartModelLoopValidatesInputAndControl(t *testing.T) {
 	}
 }
 
+func TestAppStartModelLoopReturnsWhileTaskContinues(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	loopStarted := make(chan struct{})
+	releaseLoop := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/agent/sessions":
+			var body map[string]any
+			_ = json.NewDecoder(request.Body).Decode(&body)
+			w.WriteHeader(http.StatusCreated)
+			writeJSON(t, w, map[string]any{
+				"session": map[string]any{"id": body["id"], "state": "new", "revision": 1},
+			})
+		case request.Method == http.MethodPost &&
+			strings.HasPrefix(request.URL.Path, "/v1/agent/sessions/") &&
+			strings.HasSuffix(request.URL.Path, "/loop"):
+			close(loopStarted)
+			<-releaseLoop
+			writeJSON(t, w, map[string]any{
+				"session": map[string]any{"id": "async-session", "state": "completed", "revision": 2},
+				"calls":   []any{},
+			})
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := controlclient.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := newApp(client, token)
+	app.ctx = context.Background()
+	defer app.shutdown(context.Background())
+	result, err := app.StartModelLoop("core-1", "long task", 8, 16)
+	if err != nil {
+		t.Fatalf("StartModelLoop() error = %v", err)
+	}
+	if result.Session.State != "new" || result.AgentSessionID == "" {
+		t.Fatalf("start result = %+v", result)
+	}
+	select {
+	case <-loopStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async model loop did not start")
+	}
+	close(releaseLoop)
+}
+
 func TestAppResumesModelLoopThroughFixedBridge(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
+	resumed := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost ||
-			request.URL.Path != "/v1/agent/sessions/session-1/loop/resume" {
-			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/agent/sessions/session-1":
+			writeJSON(t, w, map[string]any{
+				"session": map[string]any{
+					"id": "session-1", "state": "unknown", "revision": 8,
+					"recovered": true, "recovery_reason": "runtime_restart",
+				},
+			})
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/agent/sessions/session-1/loop/resume":
+			if request.Header.Get("Authorization") != "Bearer "+token {
+				t.Errorf("authorization mismatch")
+			}
+			writeJSON(t, w, map[string]any{
+				"session": map[string]any{
+					"id": "session-1", "state": "completed", "revision": 9,
+					"model_turns": 3, "model_tool_calls": 1,
+				},
+				"output": "resumed",
+				"calls": []any{map[string]any{
+					"call_id": "model-call-1", "status": "succeeded",
+				}},
+			})
+			close(resumed)
+		default:
+			http.NotFound(w, request)
 		}
-		if request.Header.Get("Authorization") != "Bearer "+token {
-			t.Errorf("authorization mismatch")
-		}
-		writeJSON(t, w, map[string]any{
-			"session": map[string]any{
-				"id": "session-1", "state": "completed", "revision": 9,
-				"model_turns": 3, "model_tool_calls": 1,
-			},
-			"output": "resumed",
-			"calls": []any{map[string]any{
-				"call_id": "model-call-1", "status": "succeeded",
-			}},
-		})
 	}))
 	defer server.Close()
 	client, err := controlclient.New(server.URL)
@@ -332,9 +401,13 @@ func TestAppResumesModelLoopThroughFixedBridge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeModelLoop() error = %v", err)
 	}
-	if result.AgentSessionID != "session-1" || result.Output != "resumed" ||
-		result.Session.State != "completed" || len(result.Calls) != 1 {
+	if result.AgentSessionID != "session-1" || result.Session.State != "unknown" || len(result.Calls) != 0 {
 		t.Fatalf("result = %+v", result)
+	}
+	select {
+	case <-resumed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async model recovery was not started")
 	}
 }
 
@@ -347,6 +420,50 @@ func TestAppResumeModelLoopRequiresControlToken(t *testing.T) {
 	app.ctx = context.Background()
 	if _, err := app.ResumeModelLoop("session-1"); err == nil {
 		t.Fatal("model loop resumed without control token")
+	}
+}
+
+func TestAppCancelsAgentSessionThroughFixedBridge(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/agent/sessions/session-1/cancel" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode cancel body: %v", err)
+		}
+		if body["expected_revision"] != float64(4) {
+			t.Errorf("cancel body = %+v", body)
+		}
+		writeJSON(t, w, map[string]any{
+			"session": map[string]any{
+				"id": "session-1", "state": "cancelled", "revision": 5,
+				"cancellation": map[string]any{
+					"phase": "waiting_approval", "approval_pending": true,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := controlclient.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := newApp(client, token)
+	app.ctx = context.Background()
+	result, err := app.CancelAgentSession("session-1", 4)
+	if err != nil {
+		t.Fatalf("CancelAgentSession() error = %v", err)
+	}
+	if result.Session.State != "cancelled" ||
+		result.Session.Cancellation == nil ||
+		!result.Session.Cancellation.ApprovalPending {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

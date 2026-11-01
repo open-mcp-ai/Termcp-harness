@@ -1,10 +1,10 @@
 import {
   CANVAS_COLUMNS,
   CANVAS_ROWS,
+  isWorkspaceId,
   layoutHasOverlap,
   moduleDefinitions,
   normalizeLayout,
-  workspaceLabels,
   type ModuleId,
   type PanelContextBinding,
   type PanelLayout,
@@ -285,10 +285,6 @@ function isContextual(
     moduleId === "approvals" ||
     moduleId === "terminal" ||
     moduleId === "activity";
-}
-
-function isWorkspaceId(value: unknown): value is WorkspaceId {
-  return typeof value === "string" && Object.hasOwn(workspaceLabels, value);
 }
 
 function isModuleId(value: unknown): value is ModuleId {

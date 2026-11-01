@@ -2,6 +2,7 @@ import type {
   ApprovalDecisionResult,
   ApprovalReconciliationResult,
   ApprovalRefreshResult,
+  AgentSessionSnapshot,
   AgentSessionTranscript,
   Bootstrap,
   DesktopBridge,
@@ -77,6 +78,13 @@ export async function startModelLoop(
 
 export async function resumeModelLoop(agentSessionId: string): Promise<ModelLoopLaunchResult> {
   return bridge().ResumeModelLoop(agentSessionId);
+}
+
+export async function cancelAgentSession(
+  agentSessionId: string,
+  expectedRevision: number,
+): Promise<{ session: AgentSessionSnapshot }> {
+  return bridge().CancelAgentSession(agentSessionId, expectedRevision);
 }
 
 export async function loadAgentSessionTranscript(id: string): Promise<AgentSessionTranscript> {

@@ -26,7 +26,7 @@ test("builds a cross-Workspace copy preview without mutating source", () => {
   assert.equal(preview.snapshot.selectedSessionId, "session-1");
   assert.equal(preview.replacedPanelCount, target.length);
   assert.equal(preview.targetHadSelectedSession, true);
-  assert.match(migrationDescription(preview), /“MCP 开发”/);
+  assert.match(migrationDescription(preview), /“MCP 管理”/);
 
   preview.snapshot.layout[0].x = 9;
   assert.notEqual(source[0].x, 9);

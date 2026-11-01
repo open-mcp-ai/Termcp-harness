@@ -2,6 +2,7 @@ import { Terminal as XtermTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
+  cancelAgentSession,
   closeTerminal,
   decideApproval,
   desktopAvailable,
@@ -35,6 +36,7 @@ import {
   modelRecoveryNeedsAction,
   modelRecoverySummaryText,
   canResumeModelLoop,
+  canCancelAgentSession,
   validModelBudgets,
   visibleModelResult,
 } from "./modelLoop";
@@ -71,7 +73,7 @@ function formatTime(value?: string): string {
 function stateClass(state: string): string {
   if (state === "completed" || state === "succeeded" || state === "running") return "ready";
   if (state === "failed" || state === "blocked" || state === "expired") return "danger";
-  if (state === "waiting_approval" || state === "waiting_execution" || state === "submitted") return "warning";
+  if (state === "waiting_approval" || state === "waiting_execution" || state === "cancelling" || state === "submitted") return "warning";
   return "unknown";
 }
 
@@ -115,7 +117,10 @@ function ModelComposer({
   const unavailable = !approvalControl || stale;
   const budgetsValid = validModelBudgets(maxIterations, maxToolCalls);
   const canSubmit = !unavailable && !starting && budgetsValid && input.trim().length > 0;
-  const visibleResult = visibleModelResult(result, session?.id);
+  const matchedResult = visibleModelResult(result, session?.id);
+  const visibleResult = matchedResult && session?.id === matchedResult.agent_session_id
+    ? { ...matchedResult, session }
+    : matchedResult;
   const resultKind = visibleResult ? modelLoopResultKind(visibleResult.session.state) : "other";
   const persistedOutputVisible = !visibleResult && Boolean(transcript?.output);
 
@@ -349,7 +354,7 @@ function SessionsPanelView({
 }) {
   const sessions = data.agent_sessions.sessions;
   const counts = {
-    running: sessions.filter((session) => session.state === "running").length,
+    running: sessions.filter((session) => session.state === "running" || session.state === "cancelling").length,
     waiting: sessions.filter((session) => session.state === "waiting_approval" || session.state === "waiting_execution").length,
     failed: sessions.filter((session) => ["failed", "blocked", "expired", "unknown"].includes(session.state)).length,
   };
@@ -400,6 +405,7 @@ function AgentPanelView({
   approvalControl,
   onChanged,
   onSelectSession,
+  onOpenTerminal,
 }: {
   data: Bootstrap;
   session?: AgentSessionSnapshot;
@@ -407,6 +413,7 @@ function AgentPanelView({
   approvalControl: boolean;
   onChanged: () => Promise<void>;
   onSelectSession: (sessionId: string) => void;
+  onOpenTerminal: (sessionId: string) => void;
 }) {
   const [refreshingExecution, setRefreshingExecution] = useState(false);
   const [resumingModelLoop, setResumingModelLoop] = useState(false);
@@ -415,12 +422,16 @@ function AgentPanelView({
   const [modelRecoveryReceipt, setModelRecoveryReceipt] = useState<string | null>(null);
   const [modelRecoveryOutput, setModelRecoveryOutput] = useState("");
   const [modelRecoveryError, setModelRecoveryError] = useState<string | null>(null);
+  const [cancellingTask, setCancellingTask] = useState(false);
+  const [cancelReceipt, setCancelReceipt] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const relatedEvents = data.events.events.filter((event) =>
     session && eventBelongsToSession(event, session),
   ).slice(-8);
   const canRecover = canRefreshWaitingExecution(session, approvalControl && !stale);
   const modelRecoveryCandidate = modelRecoveryNeedsAction(session);
   const canResumeModel = canResumeModelLoop(session, approvalControl && !stale);
+  const canCancel = canCancelAgentSession(session, approvalControl && !stale);
 
   useEffect(() => {
     setRecoveryMessage(null);
@@ -428,6 +439,8 @@ function AgentPanelView({
     setModelRecoveryReceipt(null);
     setModelRecoveryOutput("");
     setModelRecoveryError(null);
+    setCancelReceipt(null);
+    setCancelError(null);
   }, [session?.id, session?.current_call_id, session?.current_approval_id, session?.state]);
 
   const recoverExecution = async () => {
@@ -477,6 +490,35 @@ function AgentPanelView({
       setResumingModelLoop(false);
     }
   };
+  const cancelTask = async () => {
+    if (!session || cancellingTask || !window.confirm(messages.agent.cancelTaskConfirm)) return;
+    setCancellingTask(true);
+    setCancelReceipt(null);
+    setCancelError(null);
+    try {
+      const result = await cancelAgentSession(session.id, session.revision);
+      const next = result.session;
+      if (next.state === "cancelled") {
+        setCancelReceipt(
+          next.cancellation?.approval_pending
+            ? messages.agent.cancelTaskApprovalPending
+            : next.cancellation?.remote_outcome_unknown
+              ? messages.agent.cancelTaskRemoteUnknown
+              : messages.agent.cancelTaskSafe,
+        );
+      } else if (next.state === "cancelling") {
+        setCancelReceipt(messages.agent.cancellationRequested);
+      } else {
+        setCancelError(messages.agent.cancelTaskRejected);
+      }
+      await onChanged();
+    } catch {
+      setCancelError(messages.agent.cancelTaskRejected);
+      await onChanged();
+    } finally {
+      setCancellingTask(false);
+    }
+  };
   return (
     <div className="canvas-module agent-module">
       {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
@@ -491,6 +533,25 @@ function AgentPanelView({
             </div>
             <span className="canvas-mono">{shortID(session.core_session_id)}</span>
           </div>
+          <section className="agent-cancel">
+            <div>
+              <strong>{messages.agent.cancelTaskTitle}</strong>
+              <span>{messages.agent.cancelTaskBody}</span>
+            </div>
+            {canCancel ? (
+              <button type="button" disabled={cancellingTask} onClick={() => void cancelTask()}>
+                {cancellingTask ? messages.agent.cancelTaskPending : messages.agent.cancelTaskAction}
+              </button>
+            ) : null}
+            {session.core_session_id ? (
+              <button type="button" onClick={() => onOpenTerminal(session.id)}>
+                {messages.agent.takeoverTerminalAction}
+              </button>
+            ) : null}
+            {session.state === "cancelling" ? <p>{messages.agent.cancellationRequested}</p> : null}
+            {cancelReceipt ? <p className="execution-recovery-receipt">{cancelReceipt}</p> : null}
+            {cancelError ? <p className="canvas-warning">{cancelError}</p> : null}
+          </section>
           {session.recovered ? (
             <p className="canvas-warning">{messages.agent.sessionRecovered(session.recovery_reason)}</p>
           ) : null}
@@ -584,6 +645,30 @@ function AgentPanelView({
           </ol>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function ApprovalStatusLine({
+  tone,
+  label,
+  summary,
+  detail,
+}: {
+  tone: "info" | "warning";
+  label: string;
+  summary: string;
+  detail: string;
+}) {
+  return (
+    <div className={`approval-status-line ${tone}`}>
+      <span className="approval-status-dot" aria-hidden="true" />
+      <strong>{label}</strong>
+      <span>{summary}</span>
+      <span className="approval-help" tabIndex={0} aria-label={`${label}：${detail}`}>
+        ?
+        <span role="tooltip">{detail}</span>
+      </span>
     </div>
   );
 }
@@ -684,12 +769,31 @@ function ApprovalsPanelView({
   };
   return (
     <div className="canvas-module approvals-module">
-      <p className="canvas-note">{messages.agent.approvalSnapshot}</p>
+      <div className="approval-status-list" aria-label="审批状态说明">
+        <ApprovalStatusLine
+          tone="info"
+          label="状态来源"
+          summary="Runtime 快照，等待 Core 回执"
+          detail={messages.agent.approvalSnapshot}
+        />
+        {data.approvals.correlation_capability === "unverified" ? (
+          <ApprovalStatusLine
+            tone="warning"
+            label="审批关联"
+            summary="待观察 approval_id"
+            detail={messages.agent.approvalCapabilityUnverified}
+          />
+        ) : null}
+        {!canDecide ? (
+          <ApprovalStatusLine
+            tone="warning"
+            label="操作权限"
+            summary="只读，未加载 token"
+            detail={messages.agent.approvalDisabled}
+          />
+        ) : null}
+      </div>
       {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
-      {data.approvals.correlation_capability === "unverified" ? (
-        <p className="canvas-warning">{messages.agent.approvalCapabilityUnverified}</p>
-      ) : null}
-      {!canDecide ? <p className="canvas-warning">{messages.agent.approvalDisabled}</p> : null}
       {sessionId ? (
         <div className="approval-filter-row">
           <strong>{showAll ? messages.agent.approvalAll : messages.agent.approvalRelated}</strong>
@@ -802,6 +906,8 @@ function terminalStateLabel(state: TerminalState): string {
   switch (state) {
     case "connecting":
       return "正在连接";
+    case "reconnecting":
+      return "正在自动重连";
     case "connected":
       return "已连接";
     case "ended":
@@ -913,7 +1019,11 @@ function TerminalView({
         setDroppedBytes(result.dropped_output_bytes);
         if (result.last_error) setTerminalError(result.last_error);
         if (result.state === "connected") {
+          setTerminalError(null);
           schedulePoll(result.output ? 16 : 45);
+        } else if (result.state === "reconnecting") {
+          setTerminalError(result.last_error ?? "Core 连接中断，正在自动重连并核对输出缺口。");
+          schedulePoll(100);
         } else if (result.state === "unknown") {
           setTerminalError((current) => current ?? "Core 连接已断开，远端 Shell 状态未知。");
         }

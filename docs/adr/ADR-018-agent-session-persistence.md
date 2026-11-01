@@ -18,7 +18,7 @@ Agent Session 和模型上下文此前只存在于内存。Runtime 重启后，�
 - POSIX 下文件以 `0600` 写入；写入使用同目录临时文件、`Sync` 和原子替换。Windows 原子替换仅对 access-denied/sharing/lock 错误使用 5/10/25/50 ms 有界重试，耗尽后返回错误。文件大小默认上限 64 MiB，Session 数默认上限 1024。
 - 每次 Session 控制事件成功记录后同步持久化当前 Session 集合；Manager 将“抓取跨 Session 快照 + 保存”作为同一临界区串行执行，避免旧快照晚到覆盖新状态；持久化失败作为显式错误返回，不静默忽略。
 - 重启时恢复已完成和其他终态 Session、未运行的 `new` Session，以及 transcript/final output。
-- 重启时发现的 `running`、`waiting_approval`、`waiting_execution` Session fail-closed 收敛为 `unknown`，保留 call/approval 元数据，记录 `runtime_restart` 原因，不推断远端已执行、失败或已取消。
+- 重启时发现的 `running`、`cancelling`、`waiting_approval`、`waiting_execution` Session fail-closed 收敛为 `unknown`，保留 call/approval/cancellation 元数据，记录 `runtime_restart` 原因，不推断远端已执行、失败或已取消。
 - Session Store v2 保存活动 Loop checkpoint 的阶段、预算、工具身份/描述/Schema hash、待执行 call ID/名称/参数 hash/字节数。工具参数正文不复制进 checkpoint，仍只存在于既有 transcript 边界。
 - checkpoint 在模型请求、工具就绪、工具派发前、工具结果观察、审批等待和执行等待边界同步更新。`model_requesting` / `tools_ready` 标记为无新工具副作用的边界；派发中、结果未持久化、审批或执行未确认均明确阻塞继续。
 - 重启恢复只暴露无敏感正文的 recovery summary，并继续 fail-closed。`model_requesting` / `tools_ready` 可由 Bearer 保护的显式入口领取；领取前必须用当前 Runtime 工具目录和持久化 transcript/参数 hash 复验，同一 Session 只允许一次领取。自动恢复不在本切片内。

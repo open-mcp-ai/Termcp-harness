@@ -63,17 +63,16 @@ Shell 不要求长期保留固定左侧导航。高频入口可以来自：
 
 模块通过临时的“添加模块”抽屉或命令面板加入 Canvas。模块目录本身属于 Shell，不长期占用 Workspace 面板。
 
-### 2.4 Workspace 先提供模板，再允许自由组合
+### 2.4 场景模板与个人 Space 分层
 
-初版至少提供：
+场景模板仍提供四个固定起点：
 
 - 日常协作：Sessions、Agent Session，可选 Terminal。
 - 安全测试：Sessions、Agent Session、Terminal、Approval。
-- MCP 开发：MCP Console、Tool Inspector、Activity。
-- 任务追踪：Agent Timeline、Activity、关联执行详情。
-- 自定义工作区：用户自行组合。
+- MCP 管理：MCP 总览、Tool Inspector、Activity。
+- 诊断中心：Diagnostics、MCP、Activity。
 
-模板只提供初始布局，用户可以继续调整；系统记忆用户使用的 Workspace，而不是强制所有用户使用同一默认布局。
+模板只提供初始布局。用户可以创建多个自己的 Space，从空白或任一场景模板起步，并分别保存布局、Session 选择和撤销历史。Space 切换器优先展示个人 Space，固定场景模板收进次级分组；创建、重命名和删除均在切换器内完成。当前实现上限为 20 个个人 Space，避免无界本地目录。
 
 ### 2.5 Activity 统一入口，保留不同视图
 
@@ -147,19 +146,20 @@ Activity 面板统一承载：
 5. 实现模块抽屉、Workspace Recipe 导入导出和恢复。
 6. 最后接入 Terminal 与受控模块贡献协议。
 
-## 7. 初版 PoC 状态（2026-10-31）
+## 7. 初版 PoC 状态（2026-11-01）
 
 已实现：
 
 - 轻量 Shell：Workspace 切换、模块抽屉、命令入口、全局状态和窗口控制。
-- 四个 Workspace 模板及自定义模板。
+- 四个固定场景模板，以及可创建、重命名和删除的多个个人 Space；个人 Space 当前上限 20 个。
 - 12 列停靠网格中的面板拖动、缩放、最大化、关闭和键盘移动。
 - 12 行网格按窗口剩余高度自适应填充；Workspace 不出现整页纵向滚动条，内容溢出只在面板内部滚动。
 - 面板拖动使用 `requestAnimationFrame` 帧节流和 Canvas 内部临时布局；拖动期间不持续更新全局 Canvas 状态或写入 `localStorage`，松手后才提交。面板内容按模块上下文的引用比较跳过无意义重绘。
 - 拖到面板标题合并为标签组、拖到边缘分栏及落点预览。
 - 标签切换和关闭单个标签；关闭最后一个标签才移除面板容器。
 - 面板关闭后的重建与模板恢复。
-- 本机布局与选中 Session 持久化；Canvas 状态使用 schema v2，并兼容旧布局读取。
+- 本机布局与选中 Session 持久化；Canvas 状态使用 schema v2，并兼容旧布局读取。Space 目录使用独立 versioned localStorage（`termcp.canvas.spaces`），旧的单一 `custom` Space 会原样保留并可继续编辑。
+- Space 从空白或场景模板创建，创建后拥有独立布局、Session 引用和撤销历史；删除只移除本地导航与布局状态，不停止或重绑 Agent、Terminal、工具调用和审批。
 - 当前 Workspace 可导出为 Recipe v1 JSON，并通过校验预览后导入；导入字段使用白名单，损坏单面板隔离，未知模块、无效上下文、重复模块、越界几何和重叠布局分别处理，失败或取消不会覆盖现有布局。
 - 真实 Wails 窗口已验证下载、原生文件选择、无警告预览、取消保留布局、带修复警告预览、确认替换和 Desktop 重启后的导入布局持久化。
 - 每个 Workspace 提供最多 20 步布局与 Session 引用撤销/重做；按钮和快捷键共用同一历史，状态使用独立 versioned localStorage 持久化。真实 Wails 窗口已验证鼠标撤销、键盘重做和重启后继续撤销。

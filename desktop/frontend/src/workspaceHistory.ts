@@ -1,8 +1,9 @@
 import {
+  defaultWorkspaceCatalog,
   normalizeLayout,
-  workspaceLabels,
   type PanelLayout,
   type WorkspaceId,
+  type WorkspaceRecord,
 } from "./canvas.ts";
 
 export const WORKSPACE_HISTORY_STORAGE_KEY = "termcp.canvas.history.v1";
@@ -19,20 +20,22 @@ export interface WorkspaceHistory {
   future: WorkspaceLayoutSnapshot[];
 }
 
-export type WorkspaceHistoryMap = Record<WorkspaceId, WorkspaceHistory>;
+export type WorkspaceHistoryMap = Record<string, WorkspaceHistory>;
 
 interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
 
-export function emptyWorkspaceHistoryMap(): WorkspaceHistoryMap {
-  return (Object.keys(workspaceLabels) as WorkspaceId[]).reduce(
-    (result, workspace) => {
-      result[workspace] = { past: [], future: [] };
+export function emptyWorkspaceHistoryMap(
+  spaces = defaultWorkspaceCatalog().spaces,
+): WorkspaceHistoryMap {
+  return spaces.reduce(
+    (result, space) => {
+      result[space.id] = { past: [], future: [] };
       return result;
     },
-    {} as WorkspaceHistoryMap,
+    {} as Record<WorkspaceId, WorkspaceHistory>,
   );
 }
 
@@ -107,8 +110,11 @@ export function workspaceSnapshotsEqual(
   return JSON.stringify(cloneSnapshot(left)) === JSON.stringify(cloneSnapshot(right));
 }
 
-export function readStoredWorkspaceHistory(storage: StorageLike): WorkspaceHistoryMap {
-  const fallback = emptyWorkspaceHistoryMap();
+export function readStoredWorkspaceHistory(
+  storage: StorageLike,
+  spaces = defaultWorkspaceCatalog().spaces,
+): WorkspaceHistoryMap {
+  const fallback = emptyWorkspaceHistoryMap(spaces);
   let raw: string | null;
   try {
     raw = storage.getItem(WORKSPACE_HISTORY_STORAGE_KEY);
@@ -122,11 +128,11 @@ export function readStoredWorkspaceHistory(storage: StorageLike): WorkspaceHisto
     if (!isRecord(value) || value.version !== WORKSPACE_HISTORY_VERSION || !isRecord(value.histories)) {
       return fallback;
     }
-    for (const workspace of Object.keys(workspaceLabels) as WorkspaceId[]) {
-      fallback[workspace] = normalizeHistory(value.histories[workspace], true);
+    for (const space of spaces) {
+      fallback[space.id] = normalizeHistory(value.histories[space.id], true);
     }
   } catch {
-    return emptyWorkspaceHistoryMap();
+    return emptyWorkspaceHistoryMap(spaces);
   }
   return fallback;
 }
@@ -134,13 +140,14 @@ export function readStoredWorkspaceHistory(storage: StorageLike): WorkspaceHisto
 export function writeStoredWorkspaceHistory(
   storage: StorageLike,
   histories: WorkspaceHistoryMap,
+  spaces: WorkspaceRecord[] = defaultWorkspaceCatalog().spaces,
 ): boolean {
-  const normalized = (Object.keys(workspaceLabels) as WorkspaceId[]).reduce(
-    (result, workspace) => {
-      result[workspace] = normalizeHistory(histories[workspace], true);
+  const normalized = spaces.reduce(
+    (result, space) => {
+      result[space.id] = normalizeHistory(histories[space.id], true);
       return result;
     },
-    {} as WorkspaceHistoryMap,
+    {} as Record<WorkspaceId, WorkspaceHistory>,
   );
   try {
     storage.setItem(WORKSPACE_HISTORY_STORAGE_KEY, JSON.stringify({

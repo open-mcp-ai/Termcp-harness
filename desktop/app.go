@@ -215,25 +215,29 @@ func (a *App) StartModelLoop(
 	if err != nil {
 		return ModelLoopLaunchResult{}, err
 	}
-	ctx, cancel := a.operationContext(5*time.Minute + 30*time.Second)
-	defer cancel()
-	if _, err := a.client.CreateAgentSession(ctx, agentSessionID, coreSessionID, a.approvalToken); err != nil {
+	createContext, createCancel := a.operationContext(20 * time.Second)
+	defer createCancel()
+	created, err := a.client.CreateAgentSession(createContext, agentSessionID, coreSessionID, a.approvalToken)
+	if err != nil {
 		return ModelLoopLaunchResult{AgentSessionID: agentSessionID}, fmt.Errorf("create Agent Session: %w", err)
 	}
-	loop, loopErr := a.client.RunAgentLoop(
-		ctx,
-		agentSessionID,
-		input,
-		maxIterations,
-		maxToolCalls,
-		a.approvalToken,
-	)
+	go func() {
+		ctx, cancel := a.operationContext(5*time.Minute + 30*time.Second)
+		defer cancel()
+		_, _ = a.client.RunAgentLoop(
+			ctx,
+			agentSessionID,
+			input,
+			maxIterations,
+			maxToolCalls,
+			a.approvalToken,
+		)
+	}()
 	return ModelLoopLaunchResult{
 		AgentSessionID: agentSessionID,
-		Session:        loop.Session,
-		Output:         loop.Output,
-		Calls:          loop.Calls,
-	}, loopErr
+		Session:        created.Session,
+		Calls:          []controlclient.AgentCallSummary{},
+	}, nil
 }
 
 // ResumeModelLoop claims one safe Runtime-restarted model checkpoint through a
@@ -250,15 +254,34 @@ func (a *App) ResumeModelLoop(agentSessionID string) (ModelLoopLaunchResult, err
 	if agentSessionID == "" || len(agentSessionID) > 256 {
 		return ModelLoopLaunchResult{}, errors.New("Agent Session ID is required")
 	}
-	ctx, cancel := a.operationContext(5*time.Minute + 30*time.Second)
-	defer cancel()
-	loop, err := a.client.ResumeAgentLoop(ctx, agentSessionID, a.approvalToken)
+	readContext, readCancel := a.operationContext(20 * time.Second)
+	defer readCancel()
+	current, err := a.client.AgentSession(readContext, agentSessionID)
+	if err != nil {
+		return ModelLoopLaunchResult{}, err
+	}
+	go func() {
+		ctx, cancel := a.operationContext(5*time.Minute + 30*time.Second)
+		defer cancel()
+		_, _ = a.client.ResumeAgentLoop(ctx, agentSessionID, a.approvalToken)
+	}()
 	return ModelLoopLaunchResult{
 		AgentSessionID: agentSessionID,
-		Session:        loop.Session,
-		Output:         loop.Output,
-		Calls:          loop.Calls,
-	}, err
+		Session:        current.Session,
+		Calls:          []controlclient.AgentCallSummary{},
+	}, nil
+}
+
+func (a *App) CancelAgentSession(agentSessionID string, expectedRevision uint64) (controlclient.AgentSessionEnvelope, error) {
+	if a.client == nil {
+		return controlclient.AgentSessionEnvelope{}, errors.New("control client is required")
+	}
+	if a.approvalToken == "" {
+		return controlclient.AgentSessionEnvelope{}, errors.New("Agent Session cancellation is not configured")
+	}
+	ctx, cancel := a.operationContext(25 * time.Second)
+	defer cancel()
+	return a.client.CancelAgentSession(ctx, agentSessionID, expectedRevision, a.approvalToken)
 }
 
 func newDesktopAgentSessionID() (string, error) {

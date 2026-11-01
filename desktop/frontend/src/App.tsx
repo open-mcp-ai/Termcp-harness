@@ -17,6 +17,10 @@ import {
 } from "./api";
 import CanvasGrid from "./CanvasGrid";
 import {
+  CANVAS_COLUMNS,
+  CANVAS_GAP,
+  CANVAS_ROWS,
+  createPersonalWorkspaceRecord,
   defaultWorkspaceLayout,
   findFreeSlot,
   isContextualModule,
@@ -26,15 +30,21 @@ import {
   panelContext,
   panelTabs,
   readStoredCanvasState,
+  readStoredWorkspaceCatalog,
   removeModuleContext,
   setModuleContext,
+  workspaceNameFor,
+  workspaceRecordFor,
+  writeStoredCanvasState,
+  writeStoredWorkspaceCatalog,
   type ModuleId,
   type PanelContextBinding,
   type PanelLayout,
   type StoredCanvasState,
+  type WorkspaceCatalog,
   type WorkspaceId,
-  workspaceLabels,
-  writeStoredCanvasState,
+  type WorkspaceRecord,
+  type WorkspaceTemplateId,
 } from "./canvas";
 import { persistEventCursor, resolveEventCursor } from "./eventCursor";
 import { mergeRealtimeEvents } from "./events";
@@ -77,6 +87,7 @@ import {
   migrationDescription,
   type WorkspaceMigrationPreview,
 } from "./workspaceMigration";
+import SpaceSwitcher from "./SpaceSwitcher";
 
 const stateCopy: Record<RuntimeState, string> = messages.state;
 const eventStreamCopy: Record<EventStreamState, string> = {
@@ -99,14 +110,17 @@ function WindowControls() {
   );
 }
 
-function initialWorkspace(): WorkspaceId {
+function initialWorkspace(spaces: WorkspaceRecord[]): WorkspaceId {
   const stored = localStorage.getItem(WORKSPACE_STORAGE_KEY);
-  return stored && stored in workspaceLabels ? stored as WorkspaceId : "security";
+  return spaces.some((space) => space.id === stored)
+    ? stored as WorkspaceId
+    : spaces.find((space) => space.kind === "personal")?.id ?? "security";
 }
 
 function preferredSession(sessions: AgentSessionSnapshot[]): AgentSessionSnapshot | undefined {
   return sessions.find((session) => session.state === "waiting_approval") ??
     sessions.find((session) => session.state === "waiting_execution") ??
+    sessions.find((session) => session.state === "cancelling") ??
     sessions.find((session) => session.state === "running") ??
     sessions[0];
 }
@@ -124,22 +138,51 @@ export default function App() {
   const [approvalControl, setApprovalControl] = useState(false);
   const [eventStreamState, setEventStreamState] = useState<EventStreamState>("stopped");
   const [eventStreamError, setEventStreamError] = useState<string | null>(null);
-  const [workspace, setWorkspace] = useState<WorkspaceId>(initialWorkspace);
-  const [canvasState, setCanvasState] = useState<StoredCanvasState>(readStoredCanvasState);
+  const [workspaceCatalog, setWorkspaceCatalog] = useState<WorkspaceCatalog>(
+    () => readStoredWorkspaceCatalog(localStorage),
+  );
+  const [workspace, setWorkspace] = useState<WorkspaceId>(
+    () => initialWorkspace(workspaceCatalog.spaces),
+  );
+  const [canvasState, setCanvasState] = useState<StoredCanvasState>(
+    () => readStoredCanvasState(workspaceCatalog.spaces),
+  );
   const [moduleDrawer, setModuleDrawer] = useState(false);
   const [moduleQuery, setModuleQuery] = useState("");
+  const [commandPalette, setCommandPalette] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [layoutSettings, setLayoutSettings] = useState(false);
   const [drawerMessage, setDrawerMessage] = useState<string | null>(null);
   const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null);
   const [recipeReview, setRecipeReview] = useState<WorkspaceRecipeParseResult | null>(null);
   const [recipeProblem, setRecipeProblem] = useState<string | null>(null);
   const [migrationTarget, setMigrationTarget] = useState<WorkspaceId | null>(null);
   const [workspaceHistory, setWorkspaceHistory] = useState(
-    () => readStoredWorkspaceHistory(localStorage),
+    () => readStoredWorkspaceHistory(localStorage, workspaceCatalog.spaces),
   );
   const inFlight = useRef(false);
   const runtimeInstance = useRef("");
   const eventCursor = useRef(0);
   const recipeFileInput = useRef<HTMLInputElement>(null);
+
+  const openModuleDrawer = useCallback(() => {
+    setCommandPalette(false);
+    setLayoutSettings(false);
+    setModuleDrawer(true);
+  }, []);
+
+  const openCommandPalette = useCallback(() => {
+    setModuleDrawer(false);
+    setLayoutSettings(false);
+    setCommandQuery("");
+    setCommandPalette(true);
+  }, []);
+
+  const openLayoutSettings = useCallback(() => {
+    setModuleDrawer(false);
+    setCommandPalette(false);
+    setLayoutSettings(true);
+  }, []);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
@@ -305,12 +348,16 @@ export default function App() {
   }, [workspace]);
 
   useEffect(() => {
-    writeStoredCanvasState(canvasState);
-  }, [canvasState]);
+    writeStoredWorkspaceCatalog(localStorage, workspaceCatalog);
+  }, [workspaceCatalog]);
 
   useEffect(() => {
-    writeStoredWorkspaceHistory(localStorage, workspaceHistory);
-  }, [workspaceHistory]);
+    writeStoredCanvasState(canvasState, workspaceCatalog.spaces);
+  }, [canvasState, workspaceCatalog.spaces]);
+
+  useEffect(() => {
+    writeStoredWorkspaceHistory(localStorage, workspaceHistory, workspaceCatalog.spaces);
+  }, [workspaceCatalog.spaces, workspaceHistory]);
 
   useEffect(() => {
     if (lifecycleNotice === null) return;
@@ -335,6 +382,8 @@ export default function App() {
   const stale = Boolean(error && data);
   const panels = canvasState.layouts[workspace];
   const selectedSessionId = canvasState.selectedSessionByWorkspace[workspace];
+  const workspaceName = workspaceNameFor(workspaceCatalog.spaces, workspace);
+  const workspaceRecord = workspaceRecordFor(workspaceCatalog.spaces, workspace);
   const selectedSession = data?.agent_sessions.sessions.find(
     (session) => session.id === selectedSessionId,
   );
@@ -354,6 +403,7 @@ export default function App() {
 
   const activeTaskCount = data?.agent_sessions.sessions.filter(
     (session) => session.state === "running" ||
+      session.state === "cancelling" ||
       session.state === "waiting_approval" ||
       session.state === "waiting_execution",
   ).length ?? 0;
@@ -366,11 +416,18 @@ export default function App() {
     );
   }, [moduleQuery]);
   const migrationTargets = useMemo(
-    () => (Object.keys(workspaceLabels) as WorkspaceId[]).filter(
-      (candidate) => candidate !== workspace,
+    () => workspaceCatalog.spaces.filter(
+      (candidate) => candidate.id !== workspace,
     ),
-    [workspace],
+    [workspace, workspaceCatalog.spaces],
   );
+  const workspacePanelCounts = useMemo(() => workspaceCatalog.spaces.reduce(
+    (counts, space) => {
+      counts[space.id] = canvasState.layouts[space.id]?.length ?? 0;
+      return counts;
+    },
+    {} as Partial<Record<WorkspaceId, number>>,
+  ), [canvasState.layouts, workspaceCatalog.spaces]);
   const migrationPreview = useMemo<WorkspaceMigrationPreview | null>(() => {
     if (!migrationTarget || migrationTarget === workspace || !panels.length) return null;
     try {
@@ -542,10 +599,86 @@ export default function App() {
     setModuleDrawer(false);
   }, [panels, updatePanels]);
 
+  const openTerminalForSession = useCallback((sessionId: string) => {
+    selectSession(sessionId);
+    if (panels.some((panel) => panelContains(panel, "terminal"))) {
+      setLifecycleNotice("Terminal 已在当前工作区，当前 Agent Session 已选中；若 Terminal 已锁定，请切换其上下文。");
+      return;
+    }
+    addModule("terminal");
+  }, [addModule, panels, selectSession]);
+
   const resetLayout = useCallback(() => {
-    const next = defaultWorkspaceLayout(workspace);
+    const next = defaultWorkspaceLayout(workspaceRecord?.template ?? "blank");
     updatePanels(next);
-  }, [updatePanels, workspace]);
+  }, [updatePanels, workspaceRecord]);
+
+  const createWorkspace = useCallback((
+    name: string,
+    template: WorkspaceTemplateId,
+  ) => {
+    const record = createPersonalWorkspaceRecord(name, template);
+    const layout = normalizeLayout(defaultWorkspaceLayout(template), {
+      collapseMaximized: true,
+    });
+    setWorkspaceCatalog((current) => ({
+      ...current,
+      spaces: [...current.spaces, record],
+    }));
+    setCanvasState((current) => ({
+      ...current,
+      layouts: {
+        ...current.layouts,
+        [record.id]: layout,
+      },
+    }));
+    setWorkspaceHistory((current) => ({
+      ...current,
+      [record.id]: { past: [], future: [] },
+    }));
+    setWorkspace(record.id);
+    setMigrationTarget(null);
+    setLifecycleNotice(`已创建并打开“${record.name}”。`);
+  }, []);
+
+  const renameWorkspace = useCallback((spaceId: WorkspaceId, name: string) => {
+    const previousName = workspaceNameFor(workspaceCatalog.spaces, spaceId);
+    setWorkspaceCatalog((current) => ({
+      ...current,
+      spaces: current.spaces.map((space) =>
+        space.id === spaceId ? { ...space, name } : space
+      ),
+    }));
+    setLifecycleNotice(`已将“${previousName}”重命名为“${name}”。`);
+  }, [workspaceCatalog.spaces]);
+
+  const deleteWorkspace = useCallback((spaceId: WorkspaceId) => {
+    const target = workspaceCatalog.spaces.find((space) => space.id === spaceId);
+    if (!target || target.kind !== "personal") return;
+    const remaining = workspaceCatalog.spaces.filter((space) => space.id !== spaceId);
+    const fallback = remaining.find((space) => space.id === "security") ?? remaining[0];
+    setWorkspaceCatalog((current) => ({
+      ...current,
+      spaces: current.spaces.filter((space) => space.id !== spaceId),
+    }));
+    setCanvasState((current) => {
+      const layouts = { ...current.layouts };
+      const selectedSessionByWorkspace = { ...current.selectedSessionByWorkspace };
+      delete layouts[spaceId];
+      delete selectedSessionByWorkspace[spaceId];
+      return { ...current, layouts, selectedSessionByWorkspace };
+    });
+    setWorkspaceHistory((current) => {
+      const next = { ...current };
+      delete next[spaceId];
+      return next;
+    });
+    setMigrationTarget((current) => current === spaceId ? null : current);
+    if (workspace === spaceId) {
+      setWorkspace(fallback?.id ?? "security");
+    }
+    setLifecycleNotice(`已删除“${target.name}”；运行中的任务、终端和审批未受影响。`);
+  }, [workspace, workspaceCatalog.spaces]);
 
   const undoLayout = useCallback(() => {
     const result = undoWorkspaceHistory(
@@ -556,8 +689,8 @@ export default function App() {
     if (!result) return;
     setWorkspaceHistory(result.histories);
     replaceWorkspaceSnapshot(result.snapshot);
-    setLifecycleNotice(`已撤销“${workspaceLabels[workspace]}”的上一次布局变更。`);
-  }, [currentWorkspaceSnapshot, replaceWorkspaceSnapshot, workspace, workspaceHistory]);
+    setLifecycleNotice(`已撤销“${workspaceName}”的上一次布局变更。`);
+  }, [currentWorkspaceSnapshot, replaceWorkspaceSnapshot, workspace, workspaceHistory, workspaceName]);
 
   const redoLayout = useCallback(() => {
     const result = redoWorkspaceHistory(
@@ -568,12 +701,12 @@ export default function App() {
     if (!result) return;
     setWorkspaceHistory(result.histories);
     replaceWorkspaceSnapshot(result.snapshot);
-    setLifecycleNotice(`已重做“${workspaceLabels[workspace]}”的布局变更。`);
-  }, [currentWorkspaceSnapshot, replaceWorkspaceSnapshot, workspace, workspaceHistory]);
+    setLifecycleNotice(`已重做“${workspaceName}”的布局变更。`);
+  }, [currentWorkspaceSnapshot, replaceWorkspaceSnapshot, workspace, workspaceHistory, workspaceName]);
 
   useEffect(() => {
     const onUndoKeyDown = (event: KeyboardEvent) => {
-      if (moduleDrawer || recipeReview) return;
+      if (moduleDrawer || recipeReview || commandPalette || layoutSettings) return;
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
       const target = event.target;
       if (
@@ -591,18 +724,34 @@ export default function App() {
     };
     window.addEventListener("keydown", onUndoKeyDown);
     return () => window.removeEventListener("keydown", onUndoKeyDown);
-  }, [moduleDrawer, recipeReview, redoLayout, undoLayout]);
+  }, [commandPalette, layoutSettings, moduleDrawer, recipeReview, redoLayout, undoLayout]);
+
+  useEffect(() => {
+    const onCommandPalette = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setCommandPalette(false);
+        setLayoutSettings(false);
+        setModuleDrawer(false);
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
+      event.preventDefault();
+      openCommandPalette();
+    };
+    window.addEventListener("keydown", onCommandPalette);
+    return () => window.removeEventListener("keydown", onCommandPalette);
+  }, [openCommandPalette]);
 
   const exportCurrentWorkspace = useCallback(() => {
     try {
       const recipe = createWorkspaceRecipe(workspace, panels, selectedSessionId);
       downloadWorkspaceRecipe(recipe);
       setRecipeProblem(null);
-      setLifecycleNotice(`已导出“${workspaceLabels[workspace]}”Workspace Recipe。`);
+      setLifecycleNotice(`已导出“${workspaceName}”Space Recipe。`);
     } catch (reason) {
       setRecipeProblem(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [panels, selectedSessionId, workspace]);
+  }, [panels, selectedSessionId, workspace, workspaceName]);
 
   const selectRecipeFile = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
@@ -636,12 +785,12 @@ export default function App() {
     setRecipeReview(null);
     setRecipeProblem(null);
     setLifecycleNotice(
-      `已将“${workspaceLabels[recipe.workspace]}”Recipe 导入到“${workspaceLabels[workspace]}”；任务与审批未受影响。`,
+      `已将“${workspaceNameFor(workspaceCatalog.spaces, recipe.workspace)}”Recipe 导入到“${workspaceName}”；任务与审批未受影响。`,
     );
-  }, [applyWorkspaceSnapshot, recipeReview, workspace]);
+  }, [applyWorkspaceSnapshot, recipeReview, workspace, workspaceCatalog.spaces, workspaceName]);
 
   const openMigration = useCallback(() => {
-    const target = migrationTargets[0];
+    const target = migrationTargets[0]?.id;
     if (!target) return;
     setRecipeReview(null);
     setMigrationTarget(target);
@@ -682,9 +831,96 @@ export default function App() {
     setMigrationTarget(null);
     setRecipeProblem(null);
     setLifecycleNotice(
-      `已将“${workspaceLabels[workspace]}”布局复制到“${workspaceLabels[target]}”；任务、终端和审批未被迁移或重启。`,
+      `已将“${workspaceName}”布局复制到“${workspaceNameFor(workspaceCatalog.spaces, target)}”；任务、终端和审批未被迁移或重启。`,
     );
-  }, [canvasState, migrationPreview, workspace]);
+  }, [canvasState, migrationPreview, workspace, workspaceCatalog.spaces, workspaceName]);
+
+  const commandEntries = useMemo(() => {
+    const commands = [
+      {
+        id: "command:refresh",
+        kind: "command" as const,
+        label: "刷新 Runtime 快照",
+        description: "重新读取 Runtime、Core、MCP、审批和 Session 状态。",
+        run: () => void refresh(),
+      },
+      {
+        id: "command:undo",
+        kind: "command" as const,
+        label: "撤销布局变更",
+        description: "撤销当前 Workspace 的上一次布局修改。",
+        run: undoLayout,
+      },
+      {
+        id: "command:redo",
+        kind: "command" as const,
+        label: "重做布局变更",
+        description: "重做当前 Workspace 的上一次撤销。",
+        run: redoLayout,
+      },
+      {
+        id: "command:export",
+        kind: "command" as const,
+        label: "导出当前布局",
+        description: "导出当前 Workspace Recipe JSON。",
+        run: exportCurrentWorkspace,
+      },
+      {
+        id: "command:import",
+        kind: "command" as const,
+        label: "导入布局",
+        description: "选择并预览 Workspace Recipe JSON。",
+        run: () => recipeFileInput.current?.click(),
+      },
+      {
+        id: "command:migrate",
+        kind: "command" as const,
+        label: "复制布局到其他 Workspace",
+        description: "预览并复制当前布局和 Session 引用。",
+        run: openMigration,
+      },
+      {
+        id: "command:restore",
+        kind: "command" as const,
+        label: "恢复场景模板",
+        description: "用当前场景的推荐模块恢复布局。",
+        run: resetLayout,
+      },
+      {
+        id: "command:modules",
+        kind: "command" as const,
+        label: "打开模块目录",
+        description: "只浏览和添加 Workspace 模块。",
+        run: openModuleDrawer,
+      },
+    ];
+    const modules = moduleDefinitions.map((module) => ({
+      id: `module:${module.id}`,
+      kind: "module" as const,
+      label: `添加模块：${module.title}`,
+      description: module.description,
+      run: () => addModule(module.id),
+    }));
+    return [...commands, ...modules];
+  }, [
+    addModule,
+    exportCurrentWorkspace,
+    openMigration,
+    openModuleDrawer,
+    redoLayout,
+    refresh,
+    resetLayout,
+    undoLayout,
+  ]);
+
+  const matchingEntries = commandEntries.filter((entry) => {
+    const query = commandQuery.trim().toLocaleLowerCase();
+    if (!query) return true;
+    return `${entry.label} ${entry.description}`.toLocaleLowerCase().includes(query);
+  });
+  const matchingCommands = matchingEntries.filter((entry) => entry.kind === "command");
+  const matchingModules = matchingEntries.filter((entry) => entry.kind === "module");
+  const firstMatchingEntry = matchingEntries[0];
 
   const renderPanelBody = useCallback((panel: PanelLayout) => {
     if (!data) {
@@ -710,6 +946,7 @@ export default function App() {
             approvalControl={approvalControl && !stale}
             onChanged={refresh}
             onSelectSession={selectSession}
+            onOpenTerminal={openTerminalForSession}
           />
         );
       case "approvals":
@@ -745,6 +982,7 @@ export default function App() {
     data,
     refresh,
     resolvePanelContext,
+    openTerminalForSession,
     selectSession,
     stale,
   ]);
@@ -825,19 +1063,24 @@ export default function App() {
           </div>
         </div>
 
-        <label className="workspace-switcher no-drag">
-          <span>Workspace</span>
-          <select value={workspace} onChange={(event) => setWorkspace(event.target.value as WorkspaceId)}>
-            {(Object.keys(workspaceLabels) as WorkspaceId[]).map((id) => (
-              <option key={id} value={id}>{workspaceLabels[id]}</option>
-            ))}
-          </select>
-        </label>
+        <SpaceSwitcher
+          spaces={workspaceCatalog.spaces}
+          activeSpaceId={workspace}
+          panelCounts={workspacePanelCounts}
+          onSelect={setWorkspace}
+          onCreate={createWorkspace}
+          onRename={renameWorkspace}
+          onDelete={deleteWorkspace}
+        />
 
         <div className="canvas-top-actions no-drag">
-          <button type="button" className="canvas-primary-action" onClick={() => setModuleDrawer(true)}>+ 添加模块</button>
-          <button type="button" className="canvas-command-button" onClick={() => setModuleDrawer(true)}>
-            搜索模块、命令
+          <button type="button" className="canvas-primary-action" onClick={openModuleDrawer}>+ 添加模块</button>
+          <button
+            type="button"
+            className="canvas-command-button"
+            onClick={openCommandPalette}
+          >
+            搜索或运行命令
             <kbd>Ctrl K</kbd>
           </button>
         </div>
@@ -854,7 +1097,7 @@ export default function App() {
       <main className="canvas-main">
         <div className="canvas-toolbar">
           <div>
-            <strong>{workspaceLabels[workspace]}</strong>
+            <strong>{workspaceName}</strong>
             <span>{panels.length} 个模块 · {lastChecked ? `更新于 ${lastChecked.toLocaleTimeString(messages.locale, { hour12: false })}` : "等待连接"}</span>
             <span className={`canvas-task-summary ${activeTaskCount ? "has-active" : ""}`}>
               <i className="status-dot" />
@@ -905,9 +1148,7 @@ export default function App() {
               重做
             </button>
             <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "刷新中…" : "刷新"}</button>
-            <button type="button" onClick={exportCurrentWorkspace} disabled={!panels.length}>导出当前</button>
-            <button type="button" onClick={() => recipeFileInput.current?.click()}>导入布局</button>
-            <button type="button" onClick={openMigration} disabled={!panels.length}>复制到…</button>
+            <button type="button" onClick={openLayoutSettings}>布局设置…</button>
             <input
               ref={recipeFileInput}
               className="recipe-file-input"
@@ -916,7 +1157,6 @@ export default function App() {
               aria-label="选择 Workspace Recipe JSON 文件"
               onChange={(event) => void selectRecipeFile(event)}
             />
-            <button type="button" onClick={resetLayout}>恢复模板</button>
           </div>
         </div>
 
@@ -962,7 +1202,7 @@ export default function App() {
             <strong>当前 Workspace 没有模块</strong>
             <p>从模块目录添加面板，或恢复当前场景模板。</p>
             <div>
-              <button type="button" onClick={() => setModuleDrawer(true)}>添加模块</button>
+              <button type="button" onClick={openModuleDrawer}>添加模块</button>
               <button type="button" onClick={resetLayout}>恢复模板</button>
             </div>
           </section>
@@ -978,6 +1218,129 @@ export default function App() {
           Events {eventStreamCopy[eventStreamState]} · {stale ? "最后快照" : error ? "状态未知" : "Harness Runtime 权威状态"}
         </span>
       </footer>
+
+      {commandPalette ? (
+        <div
+          className="module-drawer-backdrop command-palette-backdrop"
+          role="presentation"
+          onMouseDown={() => setCommandPalette(false)}
+        >
+          <aside
+            className="module-drawer command-palette no-drag"
+            role="dialog"
+            aria-modal="true"
+            aria-label="搜索或运行命令"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <span>Command Palette</span>
+                <h2>搜索或运行命令</h2>
+              </div>
+              <button type="button" aria-label="关闭命令面板" onClick={() => setCommandPalette(false)}>×</button>
+            </header>
+            <input
+              autoFocus
+              value={commandQuery}
+              onChange={(event) => setCommandQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setCommandPalette(false);
+                if (event.key === "Enter" && firstMatchingEntry) {
+                  event.preventDefault();
+                  setCommandPalette(false);
+                  firstMatchingEntry.run();
+                }
+              }}
+              placeholder="搜索命令或模块…"
+              aria-label="搜索命令或模块"
+            />
+            <p className="command-palette-hint">这里搜索并执行操作；添加模块只浏览模块目录。</p>
+            <div className="command-palette-results">
+              {matchingEntries.length ? (
+                <>
+                  <section>
+                    <h3>UI 命令</h3>
+                    {matchingCommands.length ? matchingCommands.map((command) => (
+                      <button
+                        type="button"
+                        key={command.id}
+                        onClick={() => {
+                          setCommandPalette(false);
+                          command.run();
+                        }}
+                      >
+                        <strong>{command.label}</strong>
+                        <small>{command.description}</small>
+                      </button>
+                    )) : <p className="canvas-empty">没有匹配命令</p>}
+                  </section>
+                  <section>
+                    <h3>模块</h3>
+                    {matchingModules.length ? matchingModules.map((module) => (
+                      <button
+                        type="button"
+                        key={module.id}
+                        onClick={() => {
+                          setCommandPalette(false);
+                          module.run();
+                        }}
+                      >
+                        <strong>{module.label}</strong>
+                        <small>{module.description}</small>
+                      </button>
+                    )) : <p className="canvas-empty">没有匹配模块</p>}
+                  </section>
+                </>
+              ) : <p className="canvas-empty">没有匹配的命令或模块。</p>}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {layoutSettings ? (
+        <div
+          className="module-drawer-backdrop"
+          role="presentation"
+          onMouseDown={() => setLayoutSettings(false)}
+        >
+          <aside
+            className="module-drawer layout-settings no-drag"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="layout-settings-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <span>Workspace Settings</span>
+                <h2 id="layout-settings-title">布局设置</h2>
+              </div>
+              <button type="button" aria-label="关闭布局设置" onClick={() => setLayoutSettings(false)}>×</button>
+            </header>
+            <section>
+              <h3>布局精度</h3>
+              <p>
+                当前使用 {CANVAS_COLUMNS} × {CANVAS_ROWS} 网格、自动吸附和 {CANVAS_GAP} px 面板间距。
+                面板通过拖动和边缘拉伸调整；布局会自动保存。
+              </p>
+            </section>
+            <section>
+              <h3>导入、导出与复制</h3>
+              <p>这些操作只处理 Workspace 布局和 Session 引用，不会启动、停止或重绑任务。</p>
+              <div className="layout-settings-actions">
+                <button type="button" onClick={exportCurrentWorkspace} disabled={!panels.length}>导出当前</button>
+                <button type="button" onClick={() => recipeFileInput.current?.click()}>导入布局</button>
+                <button type="button" onClick={openMigration} disabled={!panels.length || !migrationTargets.length}>复制到…</button>
+              </div>
+            </section>
+            <section>
+              <h3>恢复</h3>
+              <p>恢复当前场景模板会替换这个 Workspace 的布局，可通过撤销恢复。</p>
+              <button type="button" onClick={resetLayout}>恢复模板</button>
+            </section>
+          </aside>
+        </div>
+      ) : null}
 
       {moduleDrawer ? (
         <div className="module-drawer-backdrop" role="presentation" onMouseDown={() => setModuleDrawer(false)}>
@@ -1040,9 +1403,9 @@ export default function App() {
             </header>
             <div className="recipe-review-summary">
               <p>
-                来源“{workspaceLabels[recipeReview.recipe.workspace]}”，包含
+                来源“{workspaceNameFor(workspaceCatalog.spaces, recipeReview.recipe.workspace)}”，包含
                 <strong> {recipeReview.recipe.layout.length} </strong>
-                个面板。确认后只替换“{workspaceLabels[workspace]}”当前布局。
+                个面板。确认后只替换“{workspaceName}”当前布局。
               </p>
               <p className="canvas-note">
                 导入不会启动、停止或重新绑定任何任务、终端或审批；不存在的 Session 引用会显示为关联未知。
@@ -1098,11 +1461,14 @@ export default function App() {
                   onChange={(event) => setMigrationTarget(event.target.value as WorkspaceId)}
                 >
                   {migrationTargets.map((target) => (
-                    <option key={target} value={target}>{workspaceLabels[target]}</option>
+                    <option key={target.id} value={target.id}>{target.name}</option>
                   ))}
                 </select>
               </label>
-              <p>{migrationDescription(migrationPreview)}</p>
+              <p>{migrationDescription(
+                migrationPreview,
+                workspaceNameFor(workspaceCatalog.spaces, migrationPreview.target),
+              )}</p>
               <p className="canvas-note">
                 只复制布局和 Session 引用。不会迁移 Agent、终端、工具调用或审批事实，也不会启动或停止任何任务。
               </p>

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canCancelAgentSession,
   canResumeModelLoop,
   modelLoopResultKind,
   modelRecoveryNeedsAction,
@@ -19,8 +20,19 @@ test("classifies model loop states without collapsing waiting and failure", () =
   assert.equal(modelLoopResultKind("cancelled"), "failed");
   assert.equal(modelLoopResultKind("expired"), "failed");
   assert.equal(modelLoopResultKind("unknown"), "failed");
+  assert.equal(modelLoopResultKind("cancelling"), "other");
   assert.equal(modelLoopResultKind("running"), "other");
   assert.equal(modelLoopResultKind("new"), "other");
+});
+
+test("offers task cancellation only for controllable non-terminal states", () => {
+  for (const state of ["new", "running", "waiting_approval", "waiting_execution"]) {
+    assert.equal(canCancelAgentSession({ state }, true), true, state);
+  }
+  for (const state of ["cancelling", "completed", "cancelled", "unknown"]) {
+    assert.equal(canCancelAgentSession({ state }, true), false, state);
+  }
+  assert.equal(canCancelAgentSession({ state: "running" }, false), false);
 });
 
 test("validates model budgets before invoking the fixed bridge", () => {

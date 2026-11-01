@@ -1,6 +1,6 @@
 # Terminal Workspace Shell v0.1（草案）
 
-> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察、模型任务启动、安全检查点人工恢复、持久化模型回复读取、审批决定、审批时间线、审批历史恢复、`waiting_execution` 恢复交互、Harness Canvas、Workspace Recipe v1 导入导出、跨 Workspace 布局复制、有界布局撤销/重做、真实 Core Terminal、SSE 实时事件订阅、同 Runtime 实例客户端 cursor 恢复和可选 Event Journal 恢复已实现；面板跨 Session 上下文跟随/锁定、关闭视图提示和服务端审批回执已接入；Recipe 跨版本迁移尚未实现。
+> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察、异步模型任务启动、Agent 停止任务与人工接管、安全检查点人工恢复、持久化模型回复读取、审批决定、审批时间线、审批历史恢复、`waiting_execution` 恢复交互、Harness Canvas、多 Space 创建/切换/重命名/删除、Workspace Recipe v1 导入导出、跨 Workspace 布局复制、有界布局撤销/重做、真实 Core Terminal、SSE 实时事件订阅、同 Runtime 实例客户端 cursor 恢复和可选 Event Journal 恢复已实现；面板跨 Session 上下文跟随/锁定、关闭视图提示和服务端审批回执已接入；Recipe 跨版本迁移尚未实现。
 >
 > 实现：`desktop/`
 
@@ -83,10 +83,15 @@ http://127.0.0.1:8787
 - Agent、审批、Terminal 和 Activity 面板显示“跟随当前”“已锁定”或“关联未知”；锁定目标随布局持久化，切换 Session 时不会静默改绑。
 - 面板关闭明确提示关联任务、Session 和审批不会停止；关闭审批详情不代表拒绝或取消。
 - Canvas 状态使用 schema v2，面板 ID 与模块上下文分别保存，并兼容旧版布局数据。
+- Space 切换器优先展示“我的 Spaces”，固定场景模板收在次级分组；用户可从空白或场景模板创建多个个人 Space，并在同一菜单重命名或删除。Space 目录保存在 `termcp.canvas.spaces`，布局、Session 引用和撤销历史按 Space ID 隔离。
+- 新建 Space 当前最多保留 20 个个人 Space；删除确认明确只移除本地布局、历史和 Session 引用，不停止或重绑 Agent、Terminal、工具调用与审批。旧版唯一 `custom` Space 作为首个个人 Space 读取，不迁移为固定模板。
 - 当前 Workspace 可导出为 Recipe v1 JSON；导入先显示来源、面板数和修复警告，只有用户确认后才替换当前 Workspace。
 - Recipe 最大 1 MiB、最多 64 个面板；未知模块、损坏单面板和未知字段被隔离，越界坐标裁剪，无效锁定上下文改为跟随，重复模块和重叠布局不会静默接受。
 - 真实 Wails 窗口已验证：导出触发下载并生成可解析的 Recipe v1 文件；原生文件选择器可载入导出的文件；无警告预览可取消并保留原布局；带损坏面板和无效锁定上下文的 Recipe 显示两项修复警告，确认后布局从 3 个面板替换为 2 个，Desktop 重启后仍保持导入结果。
 - 每个 Workspace 维护最多 20 步布局历史，快照只包含规范化的面板和选中 Session 引用，不包含 Token、终端正文或活动连接。移动、缩放、最大化、添加/关闭面板、上下文绑定、模板恢复和 Recipe 导入可撤销；纯 Session 选择不进入布局历史。
+- 顶部“+ 添加模块”只打开模块目录；“搜索或运行命令”与 `Ctrl+K` 打开独立命令面板，命令面板同时索引 UI 命令和可添加模块，不把任意 Shell 命令暴露为 UI 命令。
+- 撤销、重做和刷新保留在工具栏；导入、导出、复制 Workspace 和恢复模板收进“布局设置”。设置页显示当前 12 × 12 网格、8 px 间距和拖动/拉伸行为，作为 Layout Inspector 的第一版边界。
+- 审批面板将“状态来源、审批关联、操作权限”显示为三条紧凑状态；默认只显示摘要，完整解释只在悬停或键盘聚焦 `?` 时展开。
 - “撤销/重做”按钮、`Ctrl+Z` 与 `Ctrl+Shift+Z` 作用于当前 Workspace；输入框、选择框和模态预览保留原生键盘行为。历史保存到 `termcp.canvas.history.v1`，损坏条目会按快照隔离，最大化状态在持久化副本中折叠。
 - 真实 Wails 窗口已验证模板恢复后的鼠标撤销、键盘重做，以及 Desktop 重启后继续使用 `Ctrl+Z` 恢复上一布局。
 - “复制到…”可将当前布局和 Session 引用复制到其他 Workspace。预览显示目标现有面板数，确认后替换目标并切换视图；目标原布局进入目标自己的历史，可独立撤销。该操作不移动或重启 Agent、Terminal、工具调用与审批。
@@ -94,6 +99,9 @@ http://127.0.0.1:8787
 - Activity 显示本地 sequence、时间、类型、subject/correlation、class 筛选；缺少关联 ID 时显示“关联未知”。
 - Agent Session、关联审批及摘要、Harness Runtime 生命周期、Core 身份和 MCP 状态由 Canvas 模块呈现。
 - Agent 面板显示 Session 的模型轮次、模型工具调用数、当前工具/审批/执行状态，并提供“发起 Agent 任务”启动台：可选择是否绑定 Core Session、设置模型轮次/工具调用预算并提交任务。模型 endpoint 和凭据仍只在 Runtime 启动时配置，Desktop 不能修改。
+- 模型任务启动和安全检查点恢复在创建/领取成功后立即返回 Session，Runtime 请求在后台继续；Desktop 可选择该 Session 并显示停止入口。
+- Agent 面板提供“停止任务”，提交前明确不会关闭 Core Session、Shell 或审批。服务端回执区分安全取消、`cancelling`、远端结果未知和审批仍待处理。
+- “打开 Terminal 接管”选择当前 Agent Session；Terminal 若已锁定到其他上下文，用户必须显式切换，不会被静默重绑。
 - 恢复的活动模型 Session 显示 checkpoint 阶段、更新时间、迭代/工具计数和阻塞原因；只有 `unknown + runtime_restart + safe_boundary` 的 `model_requesting` / `tools_ready` 显示“从安全检查点恢复”，按钮只提交固定 Session ID。
 - 安全检查点恢复期间按钮禁用；完成后显示最终文本，进入审批/执行等待时显示最新状态，失败或冲突保留 Runtime 最新快照。`safe_boundary` 不表示自动继续。
 - 真实 Wails 窗口已验证待审批 checkpoint 的恢复展示：Session 保持 `unknown`，显示“等待审批：审批结果未确认”，保留 iteration、工具/待执行计数和 call ID，且不提供继续 Loop 按钮。
@@ -115,6 +123,7 @@ http://127.0.0.1:8787
 - 没有可信 running Shell 时 Terminal 显示 `NO TRUSTED SHELL` 等明确空态，不显示仿真命令提示符；只有绑定真实 Core Shell 后才出现 xterm 和真实 Prompt。
 - xterm 接收保序输出，人工输入通过固定 Go 桥发送；resize 同步到 Core PTY，`shell_activity` 区分人工与 Agent 输入。
 - 首次恢复 Core 保留输出的最后 512 KiB；历史截断、输出缓冲缺口、`terminal_done` 和 WebSocket 断线分别可见。
+- WebSocket 异常断开后显示 `reconnecting` 和重试次数；Bridge 自动用新订阅游标补洞，全部连续时恢复输入，超过 4 MiB 或无法证明区间连续时进入 `unknown`。
 - 关闭 Terminal 面板只关闭本地桥，不停止 Core Shell 或 Session。
 - 真实 Wails 回归已验证 Session 选择、Terminal 添加、人工输入与输出、关闭视图后 Shell 保持、重开历史恢复和 Core Session 删除后的结束状态。
 - 不可达时顶部状态为“状态未知”，Harness Runtime、Core、MCP 和事件流统一标记为“最后快照”。
@@ -149,7 +158,7 @@ http://127.0.0.1:8787
 
 ## 6. 尚未实现
 
-- Core 历史/实时原子游标、自动重连和认证凭据引用。
+- 含终端游标扩展的 Core 正式发布同步、自动重连和认证凭据引用。
 - Harness Runtime 自动启动、停止和实例所有权管理。
 - Core 子进程自动启动、停止和 managed 所有权创建。
 - Desktop 认证、远程 Harness Runtime、TLS 和凭据引用。

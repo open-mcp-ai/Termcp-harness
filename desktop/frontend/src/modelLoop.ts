@@ -87,3 +87,14 @@ export function canResumeModelLoop(
 ): boolean {
   return controlAvailable && modelRecoveryNeedsAction(session);
 }
+
+export function canCancelAgentSession(
+  session: AgentSessionSnapshot | undefined,
+  controlAvailable: boolean,
+): boolean {
+  if (!controlAvailable || !session) return false;
+  return session.state === "new" ||
+    session.state === "running" ||
+    session.state === "waiting_approval" ||
+    session.state === "waiting_execution";
+}

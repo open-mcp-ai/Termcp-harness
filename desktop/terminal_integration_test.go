@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreterminal"
 )
 
 func TestTerminalBridgeCoreIntegration(t *testing.T) {
@@ -46,6 +47,16 @@ func TestTerminalBridgeCoreIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if opened.HistoryStart < 0 || opened.HistoryEnd < opened.HistoryStart {
+		t.Fatalf("invalid Core history byte range: start=%d end=%d", opened.HistoryStart, opened.HistoryEnd)
+	}
+	t.Logf(
+		"terminal history: start=%d end=%d bytes=%d truncated=%t",
+		opened.HistoryStart,
+		opened.HistoryEnd,
+		opened.HistoryBytes,
+		opened.HistoryTruncated,
+	)
 	defer func() {
 		_ = app.TerminalClose(opened.ID)
 	}()
@@ -60,21 +71,85 @@ func TestTerminalBridgeCoreIntegration(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	var observed strings.Builder
+	var last coreterminal.PollResult
 	for time.Now().Before(deadline) {
 		polled, err := app.TerminalPoll(opened.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
+		last = polled
 		observed.WriteString(polled.Output)
 		if strings.Contains(observed.String(), marker) {
 			if polled.State != "connected" {
 				t.Fatalf("terminal state = %q during live output", polled.State)
 			}
+			if polled.OutputCursor <= opened.HistoryEnd {
+				t.Fatalf("output cursor = %d after history ended at %d", polled.OutputCursor, opened.HistoryEnd)
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("marker did not appear in terminal output; observed %q", observed.String())
+	t.Fatalf("marker did not appear in terminal output; cursor=%d observed %q", last.OutputCursor, observed.String())
+}
+
+func TestTerminalBridgeCoreShellExit(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("TERMCP_CORE_SHELL_EXIT_TEST")) != "1" {
+		t.Skip("set TERMCP_CORE_SHELL_EXIT_TEST=1 to terminate a dedicated Core shell")
+	}
+	runtimeEndpoint := strings.TrimSpace(os.Getenv("TERMCP_HARNESS_CONTROL"))
+	agentSessionID := strings.TrimSpace(os.Getenv("TERMCP_HARNESS_TEST_AGENT_ID"))
+	shellID := strings.TrimSpace(os.Getenv("TERMCP_CORE_TEST_SHELL_ID"))
+	if runtimeEndpoint == "" || agentSessionID == "" || shellID == "" {
+		t.Skip("Core terminal integration identifiers are not configured")
+	}
+
+	client, err := controlclient.New(runtimeEndpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := newApp(client, "")
+	app.ctx = context.Background()
+	defer app.shutdown(context.Background())
+
+	opened, err := app.TerminalOpen(agentSessionID, shellID, 31, 117)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = app.TerminalClose(opened.ID)
+	}()
+
+	if err := app.TerminalInput(opened.ID, "exit\r"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	var last coreterminal.PollResult
+	for time.Now().Before(deadline) {
+		polled, err := app.TerminalPoll(opened.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = polled
+		if polled.State == "ended" {
+			if polled.OutputCursor < opened.HistoryEnd {
+				t.Fatalf("Shell ended behind its opening cursor: opened=%d ended=%d", opened.HistoryEnd, polled.OutputCursor)
+			}
+			t.Logf(
+				"Shell ended at cursor=%d after opening at %d",
+				polled.OutputCursor,
+				opened.HistoryEnd,
+			)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf(
+		"Shell did not reach ended state: state=%s cursor=%d last_error=%q",
+		last.State,
+		last.OutputCursor,
+		last.LastError,
+	)
 }
 
 func TestTerminalBridgeCoreOutputFlood(t *testing.T) {

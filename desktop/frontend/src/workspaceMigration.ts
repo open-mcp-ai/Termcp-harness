@@ -62,7 +62,10 @@ export function buildWorkspaceMigration(
   };
 }
 
-export function migrationDescription(preview: WorkspaceMigrationPreview): string {
-  const target = workspaceLabels[preview.target];
+export function migrationDescription(
+  preview: WorkspaceMigrationPreview,
+  targetLabel = workspaceLabels[preview.target as keyof typeof workspaceLabels] ?? preview.target,
+): string {
+  const target = targetLabel;
   return `将 ${preview.snapshot.layout.length} 个面板复制到“${target}”，替换其现有 ${preview.replacedPanelCount} 个面板。`;
 }

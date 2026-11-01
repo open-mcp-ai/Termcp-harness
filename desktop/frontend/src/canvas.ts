@@ -10,7 +10,33 @@ export function canvasRowHeight(boardHeight: number): number {
   );
 }
 
-export type WorkspaceId = "daily" | "security" | "mcp" | "diagnostics" | "custom";
+export type BuiltInWorkspaceId = "daily" | "security" | "mcp" | "diagnostics";
+export type WorkspaceTemplateId = BuiltInWorkspaceId | "custom" | "blank";
+export type WorkspaceId = BuiltInWorkspaceId | "custom" | `space-${string}`;
+
+export interface WorkspaceRecord {
+  id: WorkspaceId;
+  name: string;
+  template: WorkspaceTemplateId;
+  kind: "preset" | "personal";
+  createdAt?: number;
+}
+
+export interface WorkspaceCatalog {
+  version: 1;
+  spaces: WorkspaceRecord[];
+}
+
+export interface WorkspaceTemplateOption {
+  id: WorkspaceTemplateId;
+  label: string;
+  description: string;
+}
+
+interface StorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
 export type ModuleId =
   | "sessions"
   | "agent"
@@ -90,8 +116,8 @@ export const moduleDefinitions: ModuleDefinition[] = [
   },
   {
     id: "mcp",
-    title: "MCP 工具",
-    description: "查看 MCP Server、工具目录和能力状态。",
+    title: "MCP 总览",
+    description: "统一查看 MCP Server 注册、连接、能力、健康与启用状态。",
     minW: 4,
     minH: 5,
     contextScope: "global",
@@ -124,15 +150,48 @@ export interface StoredCanvasState {
   selectedSessionByWorkspace: Partial<Record<WorkspaceId, string>>;
 }
 
-export const workspaceLabels: Record<WorkspaceId, string> = {
+export const WORKSPACE_CATALOG_VERSION = 1;
+export const WORKSPACE_CATALOG_STORAGE_KEY = "termcp.canvas.spaces";
+export const MAX_PERSONAL_WORKSPACES = 20;
+export const MAX_WORKSPACE_NAME_LENGTH = 32;
+
+export const workspaceLabels: Record<BuiltInWorkspaceId, string> = {
   daily: "日常协作",
   security: "安全测试",
-  mcp: "MCP 开发",
+  mcp: "MCP 管理",
   diagnostics: "诊断中心",
-  custom: "自定义工作区",
 };
 
-const workspaceTemplates: Record<WorkspaceId, PanelLayout[]> = {
+export const workspaceTemplateOptions: WorkspaceTemplateOption[] = [
+  {
+    id: "blank",
+    label: "空白 Space",
+    description: "从空画布开始，稍后按需添加模块。",
+  },
+  {
+    id: "security",
+    label: "安全测试",
+    description: "Session、Agent、审批、终端和活动记录。",
+  },
+  {
+    id: "daily",
+    label: "日常协作",
+    description: "以 Session、Agent 和活动记录为主。",
+  },
+  {
+    id: "mcp",
+    label: "MCP 管理",
+    description: "集中查看 MCP、活动记录和诊断。",
+  },
+  {
+    id: "diagnostics",
+    label: "诊断中心",
+    description: "以诊断、MCP 和活动记录为主。",
+  },
+];
+
+const workspaceTemplates: Record<WorkspaceTemplateId, PanelLayout[]> = {
+  blank: [],
   daily: [
     { id: "sessions", moduleId: "sessions", x: 0, y: 0, w: 3, h: 7 },
     { id: "agent", moduleId: "agent", x: 3, y: 0, w: 9, h: 7 },
@@ -162,8 +221,8 @@ const workspaceTemplates: Record<WorkspaceId, PanelLayout[]> = {
   ],
 };
 
-export function cloneTemplate(workspace: WorkspaceId): PanelLayout[] {
-  return workspaceTemplates[workspace].map((panel) => ({
+export function cloneTemplate(template: WorkspaceTemplateId): PanelLayout[] {
+  return workspaceTemplates[template].map((panel) => ({
     ...panel,
     tabs: panel.tabs ? [...panel.tabs] : undefined,
     contextByModule: panel.contextByModule ? { ...panel.contextByModule } : undefined,
@@ -171,8 +230,8 @@ export function cloneTemplate(workspace: WorkspaceId): PanelLayout[] {
   }));
 }
 
-export function defaultWorkspaceLayout(workspace: WorkspaceId): PanelLayout[] {
-  return cloneTemplate(workspace);
+export function defaultWorkspaceLayout(template: WorkspaceTemplateId): PanelLayout[] {
+  return cloneTemplate(template);
 }
 
 interface NormalizeLayoutOptions {
@@ -407,10 +466,188 @@ export function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
-export function defaultCanvasState(): StoredCanvasState {
-  const layouts = (Object.keys(workspaceLabels) as WorkspaceId[]).reduce(
-    (result, workspace) => {
-      result[workspace] = normalizeLayout(defaultWorkspaceLayout(workspace), {
+export function defaultWorkspaceCatalog(): WorkspaceCatalog {
+  return {
+    version: WORKSPACE_CATALOG_VERSION,
+    spaces: [
+      ...(Object.keys(workspaceLabels) as BuiltInWorkspaceId[]).map(
+        (id): WorkspaceRecord => ({
+          id,
+          name: workspaceLabels[id],
+          template: id,
+          kind: "preset",
+        }),
+      ),
+      {
+        id: "custom",
+        name: "自定义工作区",
+        template: "custom",
+        kind: "personal",
+      },
+    ],
+  };
+}
+
+export function isWorkspaceId(value: unknown): value is WorkspaceId {
+  return value === "custom" ||
+    value === "daily" ||
+    value === "security" ||
+    value === "mcp" ||
+    value === "diagnostics" ||
+    (typeof value === "string" && /^space-[a-z0-9][a-z0-9-]{5,63}$/.test(value));
+}
+
+export function isWorkspaceTemplateId(value: unknown): value is WorkspaceTemplateId {
+  return value === "blank" ||
+    value === "custom" ||
+    value === "daily" ||
+    value === "security" ||
+    value === "mcp" ||
+    value === "diagnostics";
+}
+
+export function workspaceNameFor(
+  spaces: WorkspaceRecord[],
+  workspace: WorkspaceId,
+): string {
+  const stored = spaces.find((space) => space.id === workspace)?.name.trim();
+  if (stored) return stored;
+  return workspace in workspaceLabels
+    ? workspaceLabels[workspace as BuiltInWorkspaceId]
+    : "未知 Space";
+}
+
+export function workspaceRecordFor(
+  spaces: WorkspaceRecord[],
+  workspace: WorkspaceId,
+): WorkspaceRecord | undefined {
+  return spaces.find((space) => space.id === workspace);
+}
+
+export function createPersonalWorkspaceRecord(
+  name: string,
+  template: WorkspaceTemplateId,
+  now = Date.now(),
+): WorkspaceRecord {
+  const randomID = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().toLowerCase()
+    : `${now.toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  return {
+    id: `space-${randomID.replace(/[^a-z0-9-]/g, "").slice(0, 64)}`,
+    name: normalizeWorkspaceName(name),
+    template,
+    kind: "personal",
+    createdAt: now,
+  };
+}
+
+export function workspaceNameError(
+  name: string,
+  spaces: WorkspaceRecord[],
+  excludeWorkspace?: WorkspaceId,
+): string | null {
+  const normalized = normalizeWorkspaceName(name);
+  if (!normalized) return "请输入 Space 名称。";
+  if (normalized.length > MAX_WORKSPACE_NAME_LENGTH) {
+    return `Space 名称不能超过 ${MAX_WORKSPACE_NAME_LENGTH} 个字符。`;
+  }
+  const duplicate = spaces.some((space) =>
+    space.id !== excludeWorkspace &&
+    space.name.toLocaleLowerCase() === normalized.toLocaleLowerCase()
+  );
+  return duplicate ? "已经有同名 Space，请换一个名称。" : null;
+}
+
+export function personalWorkspaceCount(spaces: WorkspaceRecord[]): number {
+  return spaces.filter((space) => space.kind === "personal").length;
+}
+
+export function readStoredWorkspaceCatalog(storage: StorageLike): WorkspaceCatalog {
+  const fallback = defaultWorkspaceCatalog();
+  let raw: string | null;
+  try {
+    raw = storage.getItem(WORKSPACE_CATALOG_STORAGE_KEY);
+  } catch {
+    return fallback;
+  }
+  if (!raw) return fallback;
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !isRecord(parsed) ||
+      parsed.version !== WORKSPACE_CATALOG_VERSION ||
+      !Array.isArray(parsed.spaces)
+    ) {
+      return fallback;
+    }
+    const personal: WorkspaceRecord[] = [];
+    const seen = new Set<WorkspaceId>();
+    const seenNames = new Set<string>();
+    for (const rawSpace of parsed.spaces) {
+      if (!isRecord(rawSpace) || !isWorkspaceId(rawSpace.id) || !isPersonalWorkspaceId(rawSpace.id)) {
+        continue;
+      }
+      if (seen.has(rawSpace.id)) continue;
+      const name = normalizeWorkspaceName(rawSpace.name);
+      const normalizedName = name.toLocaleLowerCase();
+      if (
+        !name ||
+        name.length > MAX_WORKSPACE_NAME_LENGTH ||
+        seenNames.has(normalizedName) ||
+        isBuiltInWorkspaceId(rawSpace.id)
+      ) {
+        continue;
+      }
+      const template = isWorkspaceTemplateId(rawSpace.template)
+        ? rawSpace.template
+        : rawSpace.id === "custom"
+          ? "custom"
+          : "blank";
+      const createdAt = typeof rawSpace.createdAt === "number" && Number.isFinite(rawSpace.createdAt)
+        ? rawSpace.createdAt
+        : undefined;
+      seen.add(rawSpace.id);
+      seenNames.add(normalizedName);
+      personal.push({
+        id: rawSpace.id,
+        name,
+        template,
+        kind: "personal",
+        ...(createdAt ? { createdAt } : {}),
+      });
+      if (personal.length >= MAX_PERSONAL_WORKSPACES) break;
+    }
+    return {
+      version: WORKSPACE_CATALOG_VERSION,
+      spaces: [
+        ...defaultWorkspaceCatalog().spaces.filter((space) => space.kind === "preset"),
+        ...personal.slice(0, MAX_PERSONAL_WORKSPACES),
+      ],
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function writeStoredWorkspaceCatalog(
+  storage: StorageLike,
+  catalog: WorkspaceCatalog,
+): boolean {
+  try {
+    storage.setItem(WORKSPACE_CATALOG_STORAGE_KEY, JSON.stringify(catalog));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function defaultCanvasState(
+  spaces = defaultWorkspaceCatalog().spaces,
+): StoredCanvasState {
+  const layouts = spaces.reduce(
+    (result, space) => {
+      result[space.id] = normalizeLayout(defaultWorkspaceLayout(space.template), {
         collapseMaximized: true,
       });
       return result;
@@ -424,23 +661,26 @@ export function defaultCanvasState(): StoredCanvasState {
   };
 }
 
-export function readStoredCanvasState(): StoredCanvasState {
-  const fallback = defaultCanvasState();
+export function readStoredCanvasState(
+  spaces = defaultWorkspaceCatalog().spaces,
+): StoredCanvasState {
+  const fallback = defaultCanvasState(spaces);
   try {
     const current = localStorage.getItem(CANVAS_STATE_KEY);
     if (current) {
       const parsed = JSON.parse(current) as Partial<StoredCanvasState>;
       if (parsed.version === CANVAS_STATE_VERSION && parsed.layouts && typeof parsed.layouts === "object") {
-        for (const workspace of Object.keys(workspaceLabels) as WorkspaceId[]) {
-          const panels = parsed.layouts[workspace];
+        for (const space of spaces) {
+          const panels = parsed.layouts[space.id];
           if (Array.isArray(panels)) {
-            fallback.layouts[workspace] = normalizeLayout(panels, {
+            fallback.layouts[space.id] = normalizeLayout(panels, {
               collapseMaximized: true,
             });
           }
         }
         fallback.selectedSessionByWorkspace = normalizeSelectedSessions(
           parsed.selectedSessionByWorkspace,
+          spaces,
         );
         return fallback;
       }
@@ -449,10 +689,10 @@ export function readStoredCanvasState(): StoredCanvasState {
     const legacy = localStorage.getItem(LEGACY_LAYOUTS_KEY);
     if (!legacy) return fallback;
     const parsedLegacy = JSON.parse(legacy) as Partial<Record<WorkspaceId, PanelLayout[]>>;
-    for (const workspace of Object.keys(workspaceLabels) as WorkspaceId[]) {
-      const panels = parsedLegacy[workspace];
+    for (const space of spaces) {
+      const panels = parsedLegacy[space.id];
       if (Array.isArray(panels)) {
-        fallback.layouts[workspace] = normalizeLayout(panels, {
+        fallback.layouts[space.id] = normalizeLayout(panels, {
           collapseMaximized: true,
         });
       }
@@ -463,20 +703,26 @@ export function readStoredCanvasState(): StoredCanvasState {
   }
 }
 
-export function writeStoredCanvasState(state: StoredCanvasState): void {
+export function writeStoredCanvasState(
+  state: StoredCanvasState,
+  spaces = defaultWorkspaceCatalog().spaces,
+): void {
   try {
     const normalized: StoredCanvasState = {
       version: CANVAS_STATE_VERSION,
-      layouts: (Object.keys(workspaceLabels) as WorkspaceId[]).reduce(
-        (result, workspace) => {
-          result[workspace] = normalizeLayout(state.layouts[workspace] ?? [], {
+      layouts: spaces.reduce(
+        (result, space) => {
+          result[space.id] = normalizeLayout(state.layouts[space.id] ?? [], {
             collapseMaximized: true,
           });
           return result;
         },
         {} as Record<WorkspaceId, PanelLayout[]>,
       ),
-      selectedSessionByWorkspace: normalizeSelectedSessions(state.selectedSessionByWorkspace),
+      selectedSessionByWorkspace: normalizeSelectedSessions(
+        state.selectedSessionByWorkspace,
+        spaces,
+      ),
     };
     localStorage.setItem(CANVAS_STATE_KEY, JSON.stringify(normalized));
   } catch {
@@ -486,12 +732,31 @@ export function writeStoredCanvasState(state: StoredCanvasState): void {
 
 function normalizeSelectedSessions(
   selected: Partial<Record<WorkspaceId, string>> | undefined,
+  spaces: WorkspaceRecord[],
 ): Partial<Record<WorkspaceId, string>> {
   if (!selected || typeof selected !== "object") return {};
   const result: Partial<Record<WorkspaceId, string>> = {};
-  for (const workspace of Object.keys(workspaceLabels) as WorkspaceId[]) {
-    const sessionId = selected[workspace];
-    if (typeof sessionId === "string" && sessionId.trim()) result[workspace] = sessionId.trim();
+  for (const space of spaces) {
+    const sessionId = selected[space.id];
+    if (typeof sessionId === "string" && sessionId.trim()) result[space.id] = sessionId.trim();
   }
   return result;
+}
+
+function normalizeWorkspaceName(value: unknown): string {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim().slice(0, MAX_WORKSPACE_NAME_LENGTH + 1)
+    : "";
+}
+
+function isBuiltInWorkspaceId(value: unknown): value is BuiltInWorkspaceId {
+  return value === "daily" ||
+    value === "security" ||
+    value === "mcp" ||
+    value === "diagnostics";
+}
+
+function isPersonalWorkspaceId(value: unknown): value is WorkspaceId {
+  return value === "custom" ||
+    (typeof value === "string" && /^space-[a-z0-9][a-z0-9-]{5,63}$/.test(value));
 }
