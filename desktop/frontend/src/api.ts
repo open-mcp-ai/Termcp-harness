@@ -1,4 +1,18 @@
-import type { ApprovalDecisionResult, Bootstrap, DesktopBridge, EventWindow } from "./types";
+import type {
+  ApprovalDecisionResult,
+  ApprovalReconciliationResult,
+  ApprovalRefreshResult,
+  AgentSessionTranscript,
+  Bootstrap,
+  DesktopBridge,
+  EventWindow,
+  EventStreamPollResult,
+  EventStreamSnapshot,
+  ModelLoopLaunchResult,
+  TerminalOpenResult,
+  TerminalPollResult,
+  TerminalShellsResult,
+} from "./types";
 
 function bridge(): DesktopBridge {
   const app = window.go?.main?.App;
@@ -20,6 +34,18 @@ export async function loadEvents(after: number, limit = 200): Promise<EventWindo
   return bridge().Events(after, limit);
 }
 
+export async function openEventStream(after: number): Promise<EventStreamSnapshot> {
+  return bridge().OpenEventStream(after);
+}
+
+export async function pollEventStream(): Promise<EventStreamPollResult> {
+  return bridge().PollEventStream();
+}
+
+export async function closeEventStream(): Promise<void> {
+  return bridge().CloseEventStream();
+}
+
 export async function approvalControlAvailable(): Promise<boolean> {
   return bridge().ApprovalControlAvailable();
 }
@@ -30,6 +56,61 @@ export async function decideApproval(
   decision: "approve" | "reject",
 ): Promise<ApprovalDecisionResult> {
   return bridge().DecideApproval(id, revision, decision);
+}
+
+export async function refreshApprovalExecution(id: string): Promise<ApprovalRefreshResult> {
+  return bridge().RefreshApprovalExecution(id);
+}
+
+export async function reconcileApproval(id: string): Promise<ApprovalReconciliationResult> {
+  return bridge().ReconcileApproval(id);
+}
+
+export async function startModelLoop(
+  coreSessionId: string,
+  input: string,
+  maxIterations: number,
+  maxToolCalls: number,
+): Promise<ModelLoopLaunchResult> {
+  return bridge().StartModelLoop(coreSessionId, input, maxIterations, maxToolCalls);
+}
+
+export async function resumeModelLoop(agentSessionId: string): Promise<ModelLoopLaunchResult> {
+  return bridge().ResumeModelLoop(agentSessionId);
+}
+
+export async function loadAgentSessionTranscript(id: string): Promise<AgentSessionTranscript> {
+  const response = await bridge().AgentSessionTranscript(id);
+  return response.transcript;
+}
+
+export async function loadTerminalShells(agentSessionId: string): Promise<TerminalShellsResult> {
+  return bridge().TerminalShells(agentSessionId);
+}
+
+export async function openTerminal(
+  agentSessionId: string,
+  shellId: string,
+  rows: number,
+  cols: number,
+): Promise<TerminalOpenResult> {
+  return bridge().TerminalOpen(agentSessionId, shellId, rows, cols);
+}
+
+export async function pollTerminal(id: string): Promise<TerminalPollResult> {
+  return bridge().TerminalPoll(id);
+}
+
+export async function sendTerminalInput(id: string, data: string): Promise<void> {
+  return bridge().TerminalInput(id, data);
+}
+
+export async function resizeTerminal(id: string, rows: number, cols: number): Promise<void> {
+  return bridge().TerminalResize(id, rows, cols);
+}
+
+export async function closeTerminal(id: string): Promise<void> {
+  return bridge().TerminalClose(id);
 }
 
 export async function windowAction(action: "minimise" | "maximise" | "close"): Promise<void> {

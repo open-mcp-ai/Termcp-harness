@@ -1,13 +1,17 @@
 import {
+  memo,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  useEffect,
   useRef,
   useState,
 } from "react";
 import {
   CANVAS_COLUMNS,
+  CANVAS_GAP,
   CANVAS_ROWS,
+  canvasRowHeight,
   clamp,
   layoutHasOverlap,
   moduleDefinitions,
@@ -16,9 +20,6 @@ import {
   type ModuleId,
   type PanelLayout,
 } from "./canvas";
-
-const ROW_HEIGHT = 44;
-const GAP = 8;
 
 type DropZone = "tab" | "left" | "right" | "top" | "bottom";
 
@@ -43,8 +44,60 @@ interface DragState {
   startX: number;
   startY: number;
   cellWidth: number;
+  rowHeight: number;
   original: PanelLayout[];
   latest: PanelLayout[];
+  lastX: number;
+  lastY: number;
+  frame: number;
+}
+
+interface PanelRenderProps {
+  panel: PanelLayout;
+  renderPanel: (panel: PanelLayout) => ReactNode;
+}
+
+const MemoizedPanelBody = memo(
+  function PanelBody({ panel, renderPanel }: PanelRenderProps) {
+    return <>{renderPanel(panel)}</>;
+  },
+  (previous, next) =>
+    previous.renderPanel === next.renderPanel &&
+    previous.panel.id === next.panel.id &&
+    previous.panel.moduleId === next.panel.moduleId &&
+    previous.panel.tabs === next.panel.tabs &&
+    previous.panel.contextByModule === next.panel.contextByModule,
+);
+
+interface PanelContextRenderProps {
+  panel: PanelLayout;
+  moduleId: ModuleId;
+  renderContextBar?: (panel: PanelLayout, moduleId: ModuleId) => ReactNode;
+}
+
+const MemoizedPanelContext = memo(
+  function PanelContext({ panel, moduleId, renderContextBar }: PanelContextRenderProps) {
+    return <>{renderContextBar?.(panel, moduleId)}</>;
+  },
+  (previous, next) =>
+    previous.renderContextBar === next.renderContextBar &&
+    previous.panel.id === next.panel.id &&
+    previous.moduleId === next.moduleId &&
+    previous.panel.tabs === next.panel.tabs &&
+    previous.panel.contextByModule === next.panel.contextByModule,
+);
+
+function sameLayoutGeometry(left: PanelLayout[], right: PanelLayout[]): boolean {
+  return left.length === right.length && left.every((panel, index) => {
+    const candidate = right[index];
+    return Boolean(candidate) &&
+      panel.id === candidate.id &&
+      panel.x === candidate.x &&
+      panel.y === candidate.y &&
+      panel.w === candidate.w &&
+      panel.h === candidate.h &&
+      panel.maximized === candidate.maximized;
+  });
 }
 
 export default function CanvasGrid({
@@ -57,8 +110,45 @@ export default function CanvasGrid({
 }: CanvasGridProps) {
   const boardRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const panelRefs = useRef(new Map<string, HTMLElement>());
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropPreview, setDropPreview] = useState<DropPreview | null>(null);
+  const [workingPanels, setWorkingPanels] = useState(panels);
+
+  useEffect(() => {
+    if (!dragRef.current) setWorkingPanels(panels);
+  }, [panels]);
+
+  useEffect(() => () => {
+    const drag = dragRef.current;
+    if (drag?.frame) cancelAnimationFrame(drag.frame);
+    for (const element of panelRefs.current.values()) {
+      element.style.transform = "";
+      element.style.willChange = "";
+    }
+  }, []);
+
+  const setPanelRef = (panelId: string, element: HTMLElement | null) => {
+    if (element) {
+      panelRefs.current.set(panelId, element);
+    } else {
+      panelRefs.current.delete(panelId);
+    }
+  };
+
+  const setDragTransform = (panelId: string, x: number, y: number) => {
+    const element = panelRefs.current.get(panelId);
+    if (!element) return;
+    element.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    element.style.willChange = "transform";
+  };
+
+  const clearDragTransform = (panelId: string) => {
+    const element = panelRefs.current.get(panelId);
+    if (!element) return;
+    element.style.transform = "";
+    element.style.willChange = "";
+  };
 
   const startPointer = (
     event: ReactPointerEvent<HTMLElement>,
@@ -67,7 +157,7 @@ export default function CanvasGrid({
   ) => {
     if (event.button !== 0 || panel.maximized || !boardRef.current) return;
     const rect = boardRef.current.getBoundingClientRect();
-    const cellWidth = (rect.width - GAP * (CANVAS_COLUMNS - 1)) / CANVAS_COLUMNS;
+    const cellWidth = (rect.width - CANVAS_GAP * (CANVAS_COLUMNS - 1)) / CANVAS_COLUMNS;
     dragRef.current = {
       mode,
       panelId: panel.id,
@@ -75,10 +165,15 @@ export default function CanvasGrid({
       startX: event.clientX,
       startY: event.clientY,
       cellWidth,
+      rowHeight: canvasRowHeight(rect.height),
       original: panels,
       latest: panels,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      frame: 0,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
+    setWorkingPanels(panels);
     setDragging(panel.id);
     event.preventDefault();
   };
@@ -86,9 +181,10 @@ export default function CanvasGrid({
   const dropTargetAt = (clientX: number, clientY: number, sourceId: string): DropPreview | null => {
     if (!boardRef.current) return null;
     const rect = boardRef.current.getBoundingClientRect();
-    const cellWidth = (rect.width - GAP * (CANVAS_COLUMNS - 1)) / CANVAS_COLUMNS;
-    const column = Math.floor((clientX - rect.left + GAP / 2) / (cellWidth + GAP));
-    const row = Math.floor((clientY - rect.top + GAP / 2) / (ROW_HEIGHT + GAP));
+    const cellWidth = (rect.width - CANVAS_GAP * (CANVAS_COLUMNS - 1)) / CANVAS_COLUMNS;
+    const rowHeight = canvasRowHeight(rect.height);
+    const column = Math.floor((clientX - rect.left + CANVAS_GAP / 2) / (cellWidth + CANVAS_GAP));
+    const row = Math.floor((clientY - rect.top + CANVAS_GAP / 2) / (rowHeight + CANVAS_GAP));
     if (column < 0 || column >= CANVAS_COLUMNS || row < 0 || row >= CANVAS_ROWS) return null;
     const target = panels.find((panel) =>
       panel.id !== sourceId &&
@@ -106,14 +202,14 @@ export default function CanvasGrid({
     return { targetId: target.id, zone: "tab" };
   };
 
-  const movePointer = (event: ReactPointerEvent<HTMLElement>) => {
+  const updateDragAt = (clientX: number, clientY: number) => {
     const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag) return;
     const panel = drag.original.find((candidate) => candidate.id === drag.panelId);
     if (!panel) return;
-    const cellHeight = ROW_HEIGHT + GAP;
-    const dx = Math.round((event.clientX - drag.startX) / (drag.cellWidth + GAP));
-    const dy = Math.round((event.clientY - drag.startY) / cellHeight);
+    const cellHeight = drag.rowHeight + CANVAS_GAP;
+    const dx = Math.round((clientX - drag.startX) / (drag.cellWidth + CANVAS_GAP));
+    const dy = Math.round((clientY - drag.startY) / cellHeight);
     const minimum = panelMinimumSize(panel);
 
     const next = drag.original.map((candidate) => {
@@ -129,9 +225,35 @@ export default function CanvasGrid({
       const h = clamp(panel.h + dy, minimum.h, CANVAS_ROWS - panel.y);
       return { ...candidate, w, h };
     });
-    drag.latest = next;
-    onChange(next);
-    setDropPreview(drag.mode === "move" ? dropTargetAt(event.clientX, event.clientY, drag.panelId) : null);
+    if (!sameLayoutGeometry(drag.latest, next)) {
+      drag.latest = next;
+      if (drag.mode === "resize") setWorkingPanels(next);
+    }
+    if (drag.mode === "move") {
+      setDragTransform(drag.panelId, clientX - drag.startX, clientY - drag.startY);
+    }
+    const preview = drag.mode === "move"
+      ? dropTargetAt(clientX, clientY, drag.panelId)
+      : null;
+    setDropPreview((current) =>
+      current?.targetId === preview?.targetId && current?.zone === preview?.zone
+        ? current
+        : preview,
+    );
+  };
+
+  const movePointer = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    if (drag.frame) return;
+    drag.frame = requestAnimationFrame(() => {
+      const current = dragRef.current;
+      if (!current) return;
+      current.frame = 0;
+      updateDragAt(current.lastX, current.lastY);
+    });
   };
 
   const mergePanels = (source: PanelLayout, target: PanelLayout, original: PanelLayout[]): PanelLayout[] => {
@@ -212,24 +334,54 @@ export default function CanvasGrid({
   const endPointer = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.frame) {
+      cancelAnimationFrame(drag.frame);
+      drag.frame = 0;
+    }
+    updateDragAt(event.clientX, event.clientY);
+    const preview = drag.mode === "move"
+      ? dropTargetAt(event.clientX, event.clientY, drag.panelId)
+      : null;
     dragRef.current = null;
+    clearDragTransform(drag.panelId);
     setDragging(null);
-    const preview = dropPreview;
     setDropPreview(null);
     if (drag.mode === "move" && preview && preview.targetId !== drag.panelId) {
       const source = drag.original.find((panel) => panel.id === drag.panelId);
       const target = drag.original.find((panel) => panel.id === preview.targetId);
       if (source && target) {
         if (preview.zone === "tab") {
-          onChange(mergePanels(source, target, drag.original));
+          const next = mergePanels(source, target, drag.original);
+          setWorkingPanels(next);
+          onChange(next);
         } else {
           const split = splitPanels(source, target, preview.zone, drag.original);
-          onChange(split ?? mergePanels(source, target, drag.original));
+          const next = split ?? mergePanels(source, target, drag.original);
+          setWorkingPanels(next);
+          onChange(next);
         }
         return;
       }
     }
-    if (layoutHasOverlap(drag.latest)) onChange(drag.original);
+    if (layoutHasOverlap(drag.latest)) {
+      setWorkingPanels(drag.original);
+      return;
+    }
+    if (!sameLayoutGeometry(drag.original, drag.latest)) {
+      setWorkingPanels(drag.latest);
+      onChange(drag.latest);
+    }
+  };
+
+  const cancelPointer = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.frame) cancelAnimationFrame(drag.frame);
+    dragRef.current = null;
+    clearDragTransform(drag.panelId);
+    setDragging(null);
+    setDropPreview(null);
+    setWorkingPanels(drag.original);
   };
 
   const moveWithKeyboard = (event: ReactKeyboardEvent<HTMLElement>, panel: PanelLayout) => {
@@ -261,11 +413,11 @@ export default function CanvasGrid({
 
   return (
     <div className="canvas-board" ref={boardRef}>
-      {panels.map((panel) => {
+      {workingPanels.map((panel) => {
         const definition = moduleDefinitions.find((candidate) => candidate.id === panel.moduleId);
         if (!definition) return null;
         const tabs = panelTabs(panel);
-        const contextBar = renderContextBar?.(panel, panel.moduleId);
+        const hasContext = Boolean(renderContextBar?.(panel, panel.moduleId));
         const placement = panel.maximized
           ? { gridColumn: `1 / span ${CANVAS_COLUMNS}`, gridRow: `1 / span ${CANVAS_ROWS}` }
           : {
@@ -274,8 +426,9 @@ export default function CanvasGrid({
             };
         return (
           <section
-            className={`canvas-panel ${contextBar ? "has-context" : ""} ${dragging === panel.id ? "is-dragging" : ""} ${panel.maximized ? "is-maximized" : ""}`}
+            className={`canvas-panel ${hasContext ? "has-context" : ""} ${dragging === panel.id ? "is-dragging" : ""} ${panel.maximized ? "is-maximized" : ""}`}
             key={panel.id}
+            ref={(element) => setPanelRef(panel.id, element)}
             data-panel-id={panel.id}
             style={placement}
             aria-label={definition.title}
@@ -289,7 +442,7 @@ export default function CanvasGrid({
                 onPointerDown={(event) => startPointer(event, panel, "move")}
                 onPointerMove={movePointer}
                 onPointerUp={endPointer}
-                onPointerCancel={endPointer}
+                onPointerCancel={cancelPointer}
                 onKeyDown={(event) => moveWithKeyboard(event, panel)}
               >
                 ⠿
@@ -326,8 +479,18 @@ export default function CanvasGrid({
                 </button>
               </div>
             </header>
-            {contextBar ? <div className="canvas-panel-context">{contextBar}</div> : null}
-            <div className="canvas-panel-content">{renderPanel(panel)}</div>
+            {hasContext ? (
+              <div className="canvas-panel-context">
+                <MemoizedPanelContext
+                  panel={panel}
+                  moduleId={panel.moduleId}
+                  renderContextBar={renderContextBar}
+                />
+              </div>
+            ) : null}
+            <div className="canvas-panel-content">
+              <MemoizedPanelBody panel={panel} renderPanel={renderPanel} />
+            </div>
             {dropPreview?.targetId === panel.id ? (
               <div className={`canvas-drop-preview ${dropPreview.zone}`} aria-hidden="true" />
             ) : null}
@@ -339,7 +502,7 @@ export default function CanvasGrid({
                 onPointerDown={(event) => startPointer(event, panel, "resize")}
                 onPointerMove={movePointer}
                 onPointerUp={endPointer}
-                onPointerCancel={endPointer}
+                onPointerCancel={cancelPointer}
               />
             ) : null}
           </section>

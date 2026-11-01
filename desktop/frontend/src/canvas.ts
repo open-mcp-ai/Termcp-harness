@@ -1,5 +1,14 @@
 export const CANVAS_COLUMNS = 12;
 export const CANVAS_ROWS = 12;
+export const CANVAS_GAP = 8;
+
+export function canvasRowHeight(boardHeight: number): number {
+  if (!Number.isFinite(boardHeight) || boardHeight <= 0) return 1;
+  return Math.max(
+    1,
+    (boardHeight - CANVAS_GAP * (CANVAS_ROWS - 1)) / CANVAS_ROWS,
+  );
+}
 
 export type WorkspaceId = "daily" | "security" | "mcp" | "diagnostics" | "custom";
 export type ModuleId =
@@ -74,9 +83,9 @@ export const moduleDefinitions: ModuleDefinition[] = [
   {
     id: "terminal",
     title: "Terminal",
-    description: "真实终端现场。当前为 Canvas 接入占位。",
+    description: "通过固定 Desktop 桥接入真实 Core PTY，显示 Agent 与人工共享的 Shell。",
     minW: 4,
-    minH: 4,
+    minH: 5,
     contextScope: "session",
   },
   {
@@ -166,25 +175,46 @@ export function defaultWorkspaceLayout(workspace: WorkspaceId): PanelLayout[] {
   return cloneTemplate(workspace);
 }
 
-export function normalizeLayout(panels: PanelLayout[]): PanelLayout[] {
+interface NormalizeLayoutOptions {
+  collapseMaximized?: boolean;
+}
+
+export function normalizeLayout(
+  panels: PanelLayout[],
+  options: NormalizeLayoutOptions = {},
+): PanelLayout[] {
   const seen = new Set<ModuleId>();
   const seenPanelIds = new Set<string>();
   return panels
-    .filter((panel) => moduleDefinitions.some((definition) => definition.id === panel.moduleId))
-    .map((panel, index) => {
-      const requestedId = typeof panel.id === "string" ? panel.id.trim() : "";
+    .filter(isRecord)
+    .map((raw, index): PanelLayout | null => {
+      const rawTabs = Array.isArray(raw.tabs)
+        ? raw.tabs.filter(isModuleId).filter((moduleId, tabIndex, tabs) => tabs.indexOf(moduleId) === tabIndex)
+        : [];
+      const rawModuleId = isModuleId(raw.moduleId) ? raw.moduleId : rawTabs[0];
+      if (!rawModuleId) return null;
+      const tabs = rawTabs.length ? rawTabs : [rawModuleId];
+      const moduleId = tabs.includes(rawModuleId) ? rawModuleId : tabs[0];
+      const requestedId = typeof raw.id === "string" ? raw.id.trim() : "";
       const id = requestedId && !seenPanelIds.has(requestedId)
         ? requestedId
-        : `panel-${panel.moduleId}-${index + 1}`;
+        : `panel-${moduleId}-${index + 1}`;
       seenPanelIds.add(id);
+      const restore = normalizeRestore(raw.restore);
       return {
-        ...panel,
         id,
-        tabs: (panel.tabs ?? [panel.moduleId]).filter((moduleId) =>
-          moduleDefinitions.some((definition) => definition.id === moduleId),
-        ),
+        moduleId,
+        tabs,
+        x: finiteNumber(raw.x, 0),
+        y: finiteNumber(raw.y, 0),
+        w: finiteNumber(raw.w, 0),
+        h: finiteNumber(raw.h, 0),
+        contextByModule: normalizePanelContexts(raw.contextByModule, tabs),
+        maximized: raw.maximized === true && restore !== undefined,
+        restore,
       };
     })
+    .filter((panel): panel is PanelLayout => panel !== null)
     .filter((panel) => panel.tabs?.length)
     .filter((panel) => {
       panel.tabs = panel.tabs?.filter((moduleId) => {
@@ -195,9 +225,11 @@ export function normalizeLayout(panels: PanelLayout[]): PanelLayout[] {
       return Boolean(panel.tabs?.length);
     })
     .map((panel) => {
-      const restored = panel.maximized && panel.restore
+      const restored = options.collapseMaximized && panel.maximized && panel.restore
         ? { ...panel, ...panel.restore, maximized: false, restore: undefined }
-        : panel;
+        : panel.maximized && !panel.restore
+          ? { ...panel, maximized: false, restore: undefined }
+          : panel;
       const tabs = restored.tabs ?? [restored.moduleId];
       const moduleId = tabs.includes(restored.moduleId) ? restored.moduleId : tabs[0];
       const min = panelMinimumSize({ ...restored, moduleId, tabs });
@@ -217,19 +249,54 @@ export function normalizeLayout(panels: PanelLayout[]): PanelLayout[] {
 }
 
 function normalizePanelContexts(
-  panel: PanelLayout,
+  rawContexts: unknown,
   tabs: ModuleId[],
 ): Partial<Record<ContextualModuleId, PanelContextBinding>> | undefined {
+  if (!isRecord(rawContexts)) return undefined;
   const contexts: Partial<Record<ContextualModuleId, PanelContextBinding>> = {};
   for (const moduleId of tabs) {
     if (!isContextualModule(moduleId)) continue;
-    const context = panel.contextByModule?.[moduleId];
-    const sessionId = typeof context?.sessionId === "string" ? context.sessionId.trim() : "";
-    contexts[moduleId] = context?.mode === "pinned"
+    const context = rawContexts[moduleId];
+    if (!isRecord(context)) {
+      contexts[moduleId] = { mode: "follow" };
+      continue;
+    }
+    const sessionId = typeof context.sessionId === "string" ? context.sessionId.trim() : "";
+    contexts[moduleId] = context.mode === "pinned"
       ? { mode: "pinned", ...(sessionId ? { sessionId } : {}) }
       : { mode: "follow" };
   }
   return Object.keys(contexts).length ? contexts : undefined;
+}
+
+function normalizeRestore(value: unknown): PanelLayout["restore"] | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    !isFiniteNumber(value.x) ||
+    !isFiniteNumber(value.y) ||
+    !isFiniteNumber(value.w) ||
+    !isFiniteNumber(value.h)
+  ) {
+    return undefined;
+  }
+  return { x: value.x, y: value.y, w: value.w, h: value.h };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+  return isFiniteNumber(value) ? value : fallback;
+}
+
+function isModuleId(value: unknown): value is ModuleId {
+  return typeof value === "string" &&
+    moduleDefinitions.some((definition) => definition.id === value);
 }
 
 export function isContextualModule(moduleId: ModuleId): moduleId is ContextualModuleId {
@@ -336,13 +403,16 @@ export function findFreeSlot(panels: PanelLayout[], moduleId: ModuleId): PanelLa
 }
 
 export function clamp(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return minimum;
   return Math.min(Math.max(value, minimum), maximum);
 }
 
 export function defaultCanvasState(): StoredCanvasState {
   const layouts = (Object.keys(workspaceLabels) as WorkspaceId[]).reduce(
     (result, workspace) => {
-      result[workspace] = normalizeLayout(defaultWorkspaceLayout(workspace));
+      result[workspace] = normalizeLayout(defaultWorkspaceLayout(workspace), {
+        collapseMaximized: true,
+      });
       return result;
     },
     {} as Record<WorkspaceId, PanelLayout[]>,
@@ -363,7 +433,11 @@ export function readStoredCanvasState(): StoredCanvasState {
       if (parsed.version === CANVAS_STATE_VERSION && parsed.layouts && typeof parsed.layouts === "object") {
         for (const workspace of Object.keys(workspaceLabels) as WorkspaceId[]) {
           const panels = parsed.layouts[workspace];
-          if (Array.isArray(panels)) fallback.layouts[workspace] = normalizeLayout(panels);
+          if (Array.isArray(panels)) {
+            fallback.layouts[workspace] = normalizeLayout(panels, {
+              collapseMaximized: true,
+            });
+          }
         }
         fallback.selectedSessionByWorkspace = normalizeSelectedSessions(
           parsed.selectedSessionByWorkspace,
@@ -377,7 +451,11 @@ export function readStoredCanvasState(): StoredCanvasState {
     const parsedLegacy = JSON.parse(legacy) as Partial<Record<WorkspaceId, PanelLayout[]>>;
     for (const workspace of Object.keys(workspaceLabels) as WorkspaceId[]) {
       const panels = parsedLegacy[workspace];
-      if (Array.isArray(panels)) fallback.layouts[workspace] = normalizeLayout(panels);
+      if (Array.isArray(panels)) {
+        fallback.layouts[workspace] = normalizeLayout(panels, {
+          collapseMaximized: true,
+        });
+      }
     }
     return fallback;
   } catch {
@@ -391,7 +469,9 @@ export function writeStoredCanvasState(state: StoredCanvasState): void {
       version: CANVAS_STATE_VERSION,
       layouts: (Object.keys(workspaceLabels) as WorkspaceId[]).reduce(
         (result, workspace) => {
-          result[workspace] = normalizeLayout(state.layouts[workspace] ?? []);
+          result[workspace] = normalizeLayout(state.layouts[workspace] ?? [], {
+            collapseMaximized: true,
+          });
           return result;
         },
         {} as Record<WorkspaceId, PanelLayout[]>,
