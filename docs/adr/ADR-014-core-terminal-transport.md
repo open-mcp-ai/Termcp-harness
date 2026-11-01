@@ -1,6 +1,6 @@
 # ADR-014：Core Terminal 数据路径
 
-- 状态：Accepted / 回环 Desktop 范围；生产认证、重连与 Core 原子恢复仍待实现
+- 状态：Accepted / 回环 Desktop 范围；Core 本地开发分支的订阅游标和自动重连/缺口恢复已接入，正式发布复验与生产认证仍待实现
 - 日期：2026-10-31
 - 责任范围：Terminal Workspace 到 Termcp Core 的终端数据路径
 - 关联：`ADR-008`、`ADR-010`、`ADR-013`、`docs/architecture/DESIGN_v0.4.md`、`docs/contracts/harness/v0.1/terminal-bridge.md`
@@ -16,7 +16,7 @@ Harness Canvas 已有 Terminal 面板、Session 上下文绑定和布局恢复�
 - `input`
 - `resize`
 
-历史字节通过 `GET /api/shells/{id}/output-range` 读取。Core 的 WebSocket `watch_add` 只订阅注册之后的新输出，不提供历史/实时原子切换游标。
+历史字节通过 `GET /api/shells/{id}/output-range` 读取。Core 本地开发分支的 WebSocket `watch_add` 已返回 `watch_ready.cursor`，终端帧和结束帧携带绝对字节区间，用于恢复历史与实时输出的原子交接。
 
 ## 2. 当前 PoC 决策
 
@@ -54,8 +54,9 @@ Harness Runtime 继续负责 Agent Session、审批、策略和工具控制面�
 - `terminal_done` 映射为可信 `ended`；WebSocket 断开映射为 `unknown`，不推断远端 Shell 已停止。
 - 关闭面板只关闭本地桥连接，不关闭 Core Session 或 Shell。
 - 输入、resize 和输出均不写普通日志、URL 或持久化布局。
-- 首次恢复 Core 保留输出的最后 512 KiB；更早历史明确标记未载入。
-- 历史读取与 `watch_add` 之间没有 Core 原子游标，切换点可能缺少字节或产生重复；当前不得宣称无缝恢复。
+- 首次恢复 `watch_add` 确认游标之前最多 512 KiB 的保留输出；更早历史明确标记未载入。
+- 实时帧必须与 `watch_ready.cursor` 及其后续区间连续；任何缺失、跳号或结束游标不一致都进入 `unknown`。
+- 同一 Shell 重新订阅时，旧 watch generation 不得在新 `watch_ready` 后发送帧。
 
 ## 4. 备选方案
 
@@ -76,13 +77,18 @@ Harness Runtime 继续负责 Agent Session、审批、策略和工具控制面�
 已执行：
 
 - `go test -race ./internal/coreterminal`
+- `TestManagerReconnectsAndRecoversExactOutputGap`
+- `TestManagerReconnectGapFailsClosed`
+- `TestManagerRecoversGapInBoundedPages`
+- 真实 Core `TestManagerCoreReconnectIntegration`：TCP 代理强制断连，自动重连补齐断线输出并恢复到游标 `4026`。
+- Core 本地开发分支 `go test -race ./internal/webui`
 - 真实本地 Core 下的 `TestTerminalBridgeCoreIntegration`
 - 真实本地 Core 下 20,000 行输出的 `TestTerminalBridgeCoreOutputFlood`
 - `npm run check`
 - `npm run build`
 - `wails build -s -m -nosyncgomod -nopackage -clean`
 
-真实集成测试验证了 Shell 归属查询、历史读取、WebSocket watch、输入、输出、resize、20,000 行无桥缓冲丢弃和桥关闭。真实 Wails 窗口进一步验证了 Session 选择、Terminal 添加、人工输入与输出、关闭视图不停止 Shell、重新打开历史恢复，以及 Core Session 删除后的 `Shell 已结束` 状态。
+真实集成测试验证了 Shell 归属查询、历史读取、WebSocket watch、输入、输出、resize、20,000 行无桥缓冲丢弃和桥关闭。2026-11-01 使用 Core 本地游标构建复验：历史恢复 488,728 字节，Shell 从游标 965 正常结束于 2406，20,000 行洪峰 482,765 字节、首字节 11 ms、总计 2.266 秒且桥无丢弃。真实 Wails 窗口此前进一步验证了 Session 选择、Terminal 添加、人工输入与输出、关闭视图不停止 Shell、重新打开历史恢复，以及 Core Session 删除后的 `Shell 已结束` 状态。
 
 性能基线（2026-10-31）：
 
@@ -95,5 +101,5 @@ Harness Runtime 继续负责 Agent Session、审批、策略和工具控制面�
 生产化仍需：
 
 - Core 认证后的凭据引用。
-- 自动重连与历史/实时缺口恢复策略。
-- Core 若提供历史游标或订阅确认，替换当前非原子切换边界。
+- 长时间断网、Core 重启和大规模缺口的重连压力测试。
+- 将包含 `watch_ready` / 字节区间扩展的 Core 本地构建同步到正式发布包。

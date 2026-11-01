@@ -4,6 +4,8 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 
 它不是第二个 Core，也不是 Termcp-Desktop 的复制品。Core 是真实执行平面，Harness Runtime 是 Agent/工具控制平面，Terminal Workspace 是第一方体验平面。
 
+当前 `dev` 开发快照：`v0.1.3`。版本演进与验证记录见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 当前状态
 
 - 已建立 Go 1.27 Headless Runtime 骨架，入口为 `cmd/termcp-harness`。
@@ -15,13 +17,14 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 - 已建立 Core 实例识别与所有权绑定：读取 `/api/version` 和 `/api/daemon`，用端点、PID、启动时间和版本生成实例键；默认将现有 Core 标记为 external，受管绑定必须通过 PID + 启动时间校验；控制 API 和 Desktop 已展示身份快照。
 - 已建立受控工具调用流水线：服务器、工具和精确参数 allowlist，参数/结果大小上限，状态机转换和控制事件轨迹。成功、工具级失败、传输超时/断连后的结果未知已由本地测试覆盖；真实 Core `term` 的幂等覆盖写入、副作用成功/超时未知、Kali POSIX 上主动断开 MCP Host 后的 `unknown` 与不重试，以及 review 挂起、批准、拒绝、并发决定和断开后审批均已通过 opt-in 集成测试。`review_pending` 现在映射为 `approval_pending`，不再误记为成功。
 - 已建立审批关联与协调层：只有显式 `approval_id` 可形成 `trusted` 关联，缺失或冲突不会被猜测；协调器按 revision 串行提交决定，超时/断连收敛为 `unknown`，真实决定只走 Core 公开 HTTP 契约。审批快照可携带独立的结构化 `execution`，区分 shell `submitted`、非 shell `succeeded`、执行 `failed` 和结果 `unknown`，不会把批准等同于执行成功；等待中的执行结果通过有界只读查询收敛，不重放决定。`--approval-store-file` 可持久化可信关联、决定 revision 和最后已知 Execution；重启时 `pending` / `submitting` 收敛为 `unknown`，恢复过程不自动调用 Core 或继续 Agent Loop。`unknown` 审批可通过受保护的只读 reconcile 入口查询 Core，远端仍为 `pending` 时继续保持未知。`/v1/approvals` 以 `correlation_capability` 表示当前观察结果：未配置为 `unavailable`，尚未取得可信审批引用为 `unverified`，建立可信关联后为 `trusted`。决定入口默认关闭，需显式配置受限 Bearer token 文件，并拒绝浏览器 Origin。
-- 已建立确定性 Headless Agent Session 内核：显式步骤只能经过受控工具流水线执行，遇到审批挂起、阻断、失败、取消、过期或 `unknown` 会停止并保留明确状态；Step 支持 `accepted` / `completed` 完成级别，审批结构化结果会触发一次性自动消费，只有满足完成级别后才继续剩余步骤。批准本身不等同于工具执行成功，结果 `unknown` 不会自动重试。
+- 已建立确定性 Headless Agent Session 内核：显式步骤只能经过受控工具流水线执行，遇到审批挂起、阻断、失败、取消、过期或 `unknown` 会停止并保留明确状态；Step 支持 `accepted` / `completed` 完成级别，审批结构化结果会触发一次性自动消费，只有满足完成级别后才继续剩余步骤。批准本身不等同于工具执行成功，结果 `unknown` 不会自动重试。Agent 任务可由受保护 `/cancel` 显式停止：派发前进入 `cancelled`，模型请求或工具派发中先进入 `cancelling` 并由真实执行边界收敛；已派发但无法证明结果时保持 `unknown`。等待审批/执行时停止只停止 Harness 继续推进，不宣称远端审批或工具已终止。
 - 已建立首个受保护 Agent Session 纵向切片：JSON 工具策略按 Server、工具和精确参数 allowlist 编译；`serve --tool-policy-file` 装配真实 MCP Host 与工具流水线；Bearer 保护的 `POST /v1/agent/sessions`、`/run` 和 CLI `agent run` 可创建并运行显式步骤；Desktop 展示 Session、审批和结构化执行状态，并可在 Go 进程安全持有 token 时提交批准/拒绝。运行响应不回传工具正文。
 - 首个真实纵向实验已通过：本地 Core 开发构建 + Harness 临时二进制，固定只读 `term` 步骤完成，Session 为 `completed`，并各记录一条工具成功和 Session 完成事件。实验使用临时数据目录与随机端口，结束后按精确 PID 清理。
 - 真实审批闭环已通过：`term` 文件写入返回可信 `Approval-ID`，批准前文件不存在；批准后 Core 执行写入，Harness 自动消费 `execution=succeeded` 并完成 Session，审批、恢复、完成事件各一条。
 - 真实 Core 的调用取消已观测为本地 `unknown`，不能据此认定远端未执行；20,000 行输出和 12 路并发只读调用均通过，每个调用保留独立控制事件顺序。
 - 已建立 Wails + React/TypeScript Desktop Shell，展示真实 Harness Runtime、MCP Server 和事件时间线。
-- 已建立 Harness Canvas 初版 PoC：轻量 Shell、Workspace 模板、停靠网格中的面板拖动/缩放/最大化/关闭、标签合并、边缘分栏、模块抽屉、模板恢复、本机布局持久化、有界撤销/重做、Workspace Recipe v1 导入导出和跨 Workspace 布局复制；相关面板支持跟随/锁定 Session、关闭视图提示、后台任务计数和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。每个 Workspace 保存最多 20 步布局与 Session 引用快照，支持按钮、Ctrl+Z 和 Ctrl+Shift+Z，并在 Desktop 重启后继续恢复；输入框中的文本撤销不被拦截。Recipe 导入会先校验和预览，只替换当前 Workspace，失败或取消时保留原布局；损坏的单面板、无效上下文和未知字段被隔离或清理，重叠布局和超大文件明确拒绝。跨 Workspace 复制只携带布局和 Session 引用，预览目标及覆盖范围，复制后切换目标视图，并可用目标自己的历史撤销恢复。真实 Wails 窗口已验证导出下载、原生文件选择、无警告与带修复警告的预览、取消保留布局、确认替换和重启持久化，鼠标/键盘撤销、重做和重启后撤销，以及从日常协作复制 2 个面板覆盖安全测试 5 个面板后再撤销恢复。Terminal 已通过固定 Wails Go 桥接入真实 Core Shell，支持 `@xterm/xterm`、512 KiB 历史恢复、保序 WebSocket 输出、人工输入、PTY resize、Agent/人工输入来源、有界缓冲和断线未知状态；真实 Wails 窗口已验证输入/输出、关闭视图后 Shell 保持、重开历史恢复和 Shell 结束状态。已记录 20,000 行、输入响应、WebView2 内存和双 Shell 隔离基线。Harness 事件已通过 SSE 推送，Desktop 使用固定 Go 桥进行 cursor 重连、有界缓存和事件触发的合并快照刷新。历史/实时原子切换和第三方模块贡献仍待接入。
+- 已建立 Harness Canvas 初版 PoC：轻量 Shell、Workspace 模板、停靠网格中的面板拖动/缩放/最大化/关闭、标签合并、边缘分栏、模块抽屉、模板恢复、本机布局持久化、有界撤销/重做、Workspace Recipe v1 导入导出和跨 Workspace 布局复制；相关面板支持跟随/锁定 Session、关闭视图提示、后台任务计数和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。每个 Workspace 保存最多 20 步布局与 Session 引用快照，支持按钮、Ctrl+Z 和 Ctrl+Shift+Z，并在 Desktop 重启后继续恢复；输入框中的文本撤销不被拦截。Recipe 导入会先校验和预览，只替换当前 Workspace，失败或取消时保留原布局；损坏的单面板、无效上下文和未知字段被隔离或清理，重叠布局和超大文件明确拒绝。跨 Workspace 复制只携带布局和 Session 引用，预览目标及覆盖范围，复制后切换目标视图，并可用目标自己的历史撤销恢复。真实 Wails 窗口已验证导出下载、原生文件选择、无警告与带修复警告的预览、取消保留布局、确认替换和重启持久化，鼠标/键盘撤销、重做和重启后撤销，以及从日常协作复制 2 个面板覆盖安全测试 5 个面板后再撤销恢复。Terminal 已通过固定 Wails Go 桥接入真实 Core Shell，支持 `@xterm/xterm`、512 KiB 历史恢复、保序 WebSocket 输出、人工输入、PTY resize、Agent/人工输入来源、有界缓冲和断线未知状态；Core 本地开发分支现已增加 `watch_ready` 游标、终端绝对字节区间和 `terminal_done.cursor`，Harness 会校验历史结束、实时连续性和结束游标，缺口收敛为 `unknown`。隔离 E2E 已验证 488,728 字节历史恢复、实时输出、Shell 正常结束和 20,000 行洪峰；正式 Core 发布同步仍待完成。真实 Wails 窗口此前已验证输入/输出、关闭视图后 Shell 保持、重开历史恢复和 Shell 结束状态。已记录 20,000 行、输入响应、WebView2 内存和双 Shell 隔离基线。Harness 事件已通过 SSE 推送，Desktop 使用固定 Go 桥进行 cursor 重连、有界缓存和事件触发的合并快照刷新。第三方模块贡献仍待接入。
+- Terminal Bridge 已支持自动重连：异常断开进入 `reconnecting`，按 200 ms 到 5 s 退避重试，用新的 `watch_ready.cursor` 分页补取 `[lastCursor,newCursor)`；只有全部区间严格连续才恢复 `connected`。超过 4 MiB、游标倒退、Core 已丢区间或任一页不一致时进入 `unknown`，不猜洞、不重放。重连中拒绝输入与 resize，UI 持续显示重试次数和恢复状态。
 - Desktop 默认简体中文，初始窗口 `1280×800`，采用深海军蓝与靛蓝信号色。
 - 控制 API 当前只允许绑定回环地址；审批决定与执行状态核对均受 Bearer token 保护，详见 `docs/contracts/harness/v0.1/control-api.md`。
 - 工具调用状态机已通过 `internal/toolpipeline` 接入真实 MCP Host，当前仅支持显式 allowlist 下的同步调用；真实 Core 写测试只证明覆盖语义和 `unknown` 不自动重试，不证明 Core 支持 idempotency key。审批状态、受保护 CLI 决定、Session 结果观察、Desktop 审批操作、审批时间线和 `waiting_execution` 只读核对/恢复入口已接入。OpenAI-compatible 模型 Adapter 与有界 Agent Loop 已接入受保护 API/CLI，并通过 Control API → Harness MCP Host → 本机 Core 只读 `term` → DashScope 及 DeepSeek `deepseek-v4-pro` 的真实闭环；DeepSeek thinking/tool 续轮所需的 `reasoning_content` 仅驻留内存并回填 provider，不进入 transcript、Session Store、事件或 API。Session、模型消息和最终回复可选用本地文件持久化；`runtime_restart` 后若 checkpoint 位于 `model_requesting` 或 `tools_ready`，可由用户经 Bearer 保护入口人工恢复，流式输出和自动恢复仍未实现。
@@ -58,6 +61,7 @@ go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://
 go run ./cmd/termcp-harness agent run --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --steps-file .\examples\agent-steps.readonly.json --token-file '<private-token-file>'
 go run ./cmd/termcp-harness agent loop --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --input-file '<message-file>' --max-iterations 8 --max-tool-calls 16 --token-file '<private-token-file>'
 go run ./cmd/termcp-harness agent resume --runtime http://127.0.0.1:8787 --id '<restarted-agent-session-id>' --token-file '<private-token-file>'
+go run ./cmd/termcp-harness agent cancel --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --revision 5 --token-file '<private-token-file>'
 $env:TERMCP_MODEL_INTEGRATION = '1'
 $env:TERMCP_MODEL_ENDPOINT = '<openai-compatible-chat-completions-url>'
 $env:TERMCP_MODEL_ID = '<model-id>'
@@ -265,6 +269,6 @@ Core 是执行权威与契约上游；Desktop 是成熟的人类终端工作台�
 
 ## 下一阶段
 
-1. 审批时间线、Event Journal、审批历史持久化和 `unknown` 审批只读收敛已实现首个切片，并完成真实 Wails 窗口与跨重启复验；继续补齐真实晚到回执和完整人工接管体验。
+1. 审批时间线、Event Journal、审批历史持久化、`unknown` 审批只读收敛以及 Agent 停止任务/人工接管已实现本地闭环；继续补齐真实晚到回执和可见 Wails 窗口复验。
 2. 模型 Adapter、有界 Agent Loop、Desktop 交互、基础 Session/transcript 持久化和安全检查点人工恢复已完成首个切片；继续补其他 provider、流式输出、自动恢复和摘要。
 3. 完成安装包、日志导出、跨平台和性能基线。

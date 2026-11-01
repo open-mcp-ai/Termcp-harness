@@ -315,6 +315,8 @@ Harness 的策略不能替代 Core 的服务端权限。UI 点击、按钮禁用
 
 当前实现把审批状态与工具调用状态分开建模，具体转换与限制见 `docs/contracts/harness/v0.1/state-machines.md`。
 
+Agent Session 另有显式停止路径：`running` 请求先进入 `cancelling`；派发前停止收敛为 `cancelled`，已派发工具只有在结果可信时才记录对应事实，否则收敛为 `unknown`。等待审批或执行时停止只停止 Harness 继续推进，不宣称远端审批或执行已终止。见 `ADR-021` 与 `docs/contracts/harness/v0.1/agent-session.md`。
+
 ## 8. 会话、上下文与事件日志
 
 ### 8.1 权威与边界
@@ -366,7 +368,7 @@ Terminal Workspace 的初版界面方向采用 `docs/adr/ADR-013-harness-canvas-
 - Activity 统一入口并保留实时事件、历史记录和诊断视图。
 - 面板、模块和任务生命周期必须分开。
 
-该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；面板标签合并与边缘分栏已验证，相关面板已支持跟随/锁定 Session、显式关联未知、关闭视图提示和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。Workspace Recipe v1 支持当前 Workspace 的导出、校验预览和确认替换；导入只接受已知模块与字段，隔离损坏面板、清理无效上下文、拒绝重叠布局，并在失败或取消时保留原布局。每个 Workspace 另有最多 20 步的布局/Session 引用撤销与重做历史，通过独立 versioned localStorage 持久化，支持按钮与快捷键，重启后仍可撤销；文本输入框保留原生撤销。跨 Workspace 复制复用 Recipe 字段白名单，只复制布局与 Session 引用，预览目标覆盖范围后切换目标视图，并把目标原布局写入目标自己的撤销历史。固定 Wails Go Terminal 桥已接入真实 Core：xterm、历史尾部、WebSocket 输出、人工输入、resize 和 `shell_activity` 已实现；原子历史/实时切换和第三方模块贡献仍未完成。
+该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；面板标签合并与边缘分栏已验证，相关面板已支持跟随/锁定 Session、显式关联未知、关闭视图提示和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。Workspace Recipe v1 支持当前 Workspace 的导出、校验预览和确认替换；导入只接受已知模块与字段，隔离损坏面板、清理无效上下文、拒绝重叠布局，并在失败或取消时保留原布局。每个 Workspace 另有最多 20 步的布局/Session 引用撤销与重做历史，通过独立 versioned localStorage 持久化，支持按钮与快捷键，重启后仍可撤销；文本输入框保留原生撤销。跨 Workspace 复制复用 Recipe 字段白名单，只复制布局与 Session 引用，预览目标覆盖范围后切换目标视图，并把目标原布局写入目标自己的撤销历史。固定 Wails Go Terminal 桥已接入真实 Core：xterm、历史、WebSocket 输出、人工输入、resize 和 `shell_activity` 已实现；Harness 已接入 Core 本地开发分支的 `watch_ready`/绝对字节区间并按缺口 fail-closed，正式 Core 发布复验、重连和第三方模块贡献仍未完成。
 
 ### 9.1 共享执行现场
 
@@ -385,7 +387,7 @@ Terminal Workspace 的目标不是“把 Agent 日志放在终端旁边”，而
 - Terminal Workspace 通过 Harness 转发终端字节和控制事件。
 - 混合方式：控制经 Harness，终端数据直连 Core。
 
-现实现不向 React 暴露 Core URL 或通用连接能力；Go 进程验证 Agent Session、Core Session 和 Shell 归属。Core `watch_add` 没有确认且只订阅注册后的字节，历史读取与实时 watch 之间没有原子游标，见 `docs/contracts/harness/v0.1/terminal-bridge.md`。
+现实现不向 React 暴露 Core URL 或通用连接能力；Go 进程验证 Agent Session、Core Session 和 Shell 归属。Core 本地开发分支提供 `watch_ready`、终端绝对字节区间和结束游标；Harness 用订阅游标读取历史并校验实时连续性，见 `docs/contracts/harness/v0.1/terminal-bridge.md`。
 
 选择时必须评估：
 
@@ -631,5 +633,14 @@ Harness Shell 是固定展示底座，负责：
 - `docs/adr/ADR-010-core-integration-boundary.md`
 - `docs/adr/ADR-011-mcp-native-agent-runtime.md`
 - `docs/adr/ADR-012-runtime-bootstrap-technology.md`（Proposed / bootstrap 已实现）
+- `docs/adr/ADR-013-harness-canvas-layout.md`
+- `docs/adr/ADR-014-core-terminal-transport.md`
+- `docs/adr/ADR-015-realtime-event-stream.md`
+- `docs/adr/ADR-016-mcp-supervised-lifecycle.md`
+- `docs/adr/ADR-017-model-adapter-agent-loop.md`
+- `docs/adr/ADR-018-agent-session-persistence.md`
+- `docs/adr/ADR-019-event-journal-persistence.md`
+- `docs/adr/ADR-020-approval-history-persistence.md`
+- `docs/adr/ADR-021-agent-cancellation.md`
 
 ADR 状态以各文件为准。记录决策不等于代码、Core 或第三方 MCP 已支持相应能力。

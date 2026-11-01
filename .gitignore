@@ -14,6 +14,7 @@ coverage.out
 
 # Local runtime data and logs
 /.cache/
+/.worktrees/
 *.log
 
 # OS and editor files

@@ -59,7 +59,8 @@ docs/
     ├── ADR-017-model-adapter-agent-loop.md
     ├── ADR-018-agent-session-persistence.md
     ├── ADR-019-event-journal-persistence.md
-    └── ADR-020-approval-history-persistence.md
+    ├── ADR-020-approval-history-persistence.md
+    └── ADR-021-agent-cancellation.md
 ```
 
 ## 阅读顺序
@@ -93,6 +94,7 @@ docs/
 27. `docs/adr/ADR-018-agent-session-persistence.md`（Session 与模型 transcript 持久化边界）
 28. `docs/adr/ADR-019-event-journal-persistence.md`（事件窗口、sequence 与重启恢复边界）
 29. `docs/adr/ADR-020-approval-history-persistence.md`（审批历史、fail-closed 恢复与执行元数据边界）
+30. `docs/adr/ADR-021-agent-cancellation.md`（Agent 停止任务、派发门与人工接管边界）
 
 ## 文档职责
 
