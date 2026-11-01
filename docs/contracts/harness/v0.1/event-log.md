@@ -103,6 +103,7 @@ Core 实例识别会写入以下控制事件：
 - `agent.model.failed`
 - `agent.session.waiting_approval`
 - `agent.session.waiting_execution`
+- `agent.session.cancel_requested`
 - `agent.session.approval_observed`
 - `agent.tool.result_observed`
 - `agent.session.resumed`

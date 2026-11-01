@@ -55,6 +55,7 @@ PID 和启动时间是这次观测值，不是稳定契约字段。
 - 原 release 二进制备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-approval-correlation`。
 - rebase 前开发二进制备份：`C:\Users\miles\.termcp\versions\v0.2.8\backups\termcp.exe.20261031-pre-rebased-pr`。
 - 审批过期、Session 关闭后 `cancelled`、可信 `approval_id` 和 Desktop 批准闭环的复验结果见 `known-issues.md` 第 9 节。
+- 终端 `watch_ready`、绝对字节区间和结束游标已并入本地组合分支 `codex/core-local-integration`，尚未安装到 `18765` 常驻实例；2026-11-01 已构建独立 `18767` 临时实例并通过 Harness Desktop 桥、审批、过期和 Session 关闭组合 E2E，边界见 `known-issues.md` 第 10、11 节和 `CORE-0.2.8-004`。
 
 ## 实例自报文档
 

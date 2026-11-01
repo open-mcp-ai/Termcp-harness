@@ -104,25 +104,39 @@
 
 ### CORE-0.2.8-004：Terminal 历史与实时订阅缺少原子切换
 
-- 状态：**OPEN / CAPABILITY_GAP**
+- 状态：**FIXED_LOCAL / E2E_VERIFIED（Core 本地源码、Harness Desktop 桥和真实隔离实例均已验证；正式 Core 发布仍待同步）**
 - 严重度：**中，阻塞“无缺口终端恢复”承诺**
 - 首次确认：2026-10-31
+- 本地修复：2026-11-01，`fix/terminal-watch-cursor`
 - 公开契约：
   - `GET /api/shells/{id}/output-range` 返回 `start`、`end`、`total` 和字节窗口。
-  - WebSocket `watch_add` 没有服务端确认。
-  - `terminal` 帧只携带 `id` 和 `d`，不携带字节偏移或订阅游标。
-- 实际行为：客户端必须先读取历史、再注册 `watch_add`；两步之间没有原子边界，不能证明历史末尾与第一条实时帧之间无缺口或无重复。
-- 影响：重连、首开和“历史 + 实时”恢复无法承诺完全无缝；依靠文本、时间或相邻事件去重会破坏可信关联。
+  - WebSocket `watch_add` 增加 `watch_ready`，返回订阅后的第一个可信绝对字节游标。
+  - `terminal` 帧增加半开绝对字节区间 `start` / `end`。
+  - `terminal_done` 增加最终 `cursor`。
+- 实际行为：
+  - 服务端先排队 `watch_ready`，之后启动该 reader 的输出泵。
+  - Harness 等待确认后用该游标读取截至该位置的历史，再严格校验后续终端区间连续性。
+  - 重复订阅会替换 watch generation；旧泵不能在新确认后发送 terminal 或 `terminal_done`。
+  - 缺失游标、空帧跳位、区间缺口、历史结束不匹配和结束游标不匹配均收敛为 `unknown`。
+- 影响：本地开发基线已消除首开与重复订阅的已知盲区；断线后的自动重连和正式 Core 发布兼容性仍未完成。
 - Harness 应对：
-  - 只恢复 Core 最近保留的 512 KiB，并显式显示更早历史未载入。
+  - 只恢复 `watch_ready` 游标之前最多 512 KiB，并显式显示更早历史未载入。
   - 不根据文本相似度、时间窗口或帧到达顺序补洞。
-  - 将历史/实时切换边界记录为无法证明，而不是写成“完整恢复”。
-  - 当前真实 Core 集成测试只证明输入、输出、resize、顺序隔离和结束状态，不证明无缝恢复。
+  - 旧 Core 缺少 `watch_ready` 时限时失败，不退回无游标路径。
 - 责任方：Core 上游。
+- 本地验证：
+  - Core：`go test -race ./internal/webui -count=1` 通过；真实内嵌 SSH Shell 的 WebSocket 测试验证 `watch_ready`、连续 `start/end`、第二次 `watch_add` 替换和 `terminal_done.cursor`。
+  - Core：`TestReplacedWatchPumpCannotSendStaleFrames` 验证被替换的 watch generation 不能发送旧帧。
+  - Harness：`go test -race ./internal/coreterminal -count=1` 通过；验证历史结束游标、实时区间连续性、空帧跳位和结束游标拒绝。
+  - Harness：`TestSessionPersistenceFailureBeforeToolDispatchRecoversUnknownWithoutSideEffect` 与 `TestSessionPersistenceFailureAfterToolExecutionRecoversUnknownWithoutReplay` 通过。
+  - 真实隔离 E2E：Core 本地构建 `+dirty` 与 Harness Desktop Go 桥通过；历史恢复 488,728 字节，实时 marker 可观测，Shell 从游标 965 正常结束于 2406。
+  - 真实洪峰 E2E：20,000 行输出共 482,765 字节，首字节 11 ms，总计 2.266 秒，218 次轮询，`dropped_output_bytes=0`。
+- 未完成验证：
+  - 扩展尚未进入正式 Core v0.2.8 发布包。
+  - 自动重连及断线补洞仍未实现。
 - 关闭条件：
-  - `watch_add` 提供确认和起始字节游标；或
-  - 提供等价的原子“历史快照 + 后续订阅”接口；或
-  - 每帧提供可与 `output-range` 对齐的稳定字节偏移，并能定义去重规则。
+  - 包含该契约的 Core 构建完成真实 Desktop 初始历史、实时输出、Shell 结束和 20,000 行洪峰复验。**已满足本地验证条件。**
+  - 正式发布包包含对应字段和关闭条件测试。
 
 ## 4. 新问题登记模板
 
@@ -222,3 +236,27 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalSessionDeathStateCo
 - 真实 Desktop 过期路径：审批超时后点击批准得到服务端 `expired`，未执行写入，UI 显示“已过期”和“服务端已确认”。
 - 本轮还修复了 Harness 前端在 Runtime 实例重启后仅比较事件 `latest_sequence`、导致新实例低序号快照被丢弃的问题；现在只有 `runtime.instance_id` 相同时才拒绝倒退序号。
 - 发布边界：`approval_id` 关联改动已提交为 `938c53f` 并推送到 Core PR #238，但尚未合并或进入正式发布；当前验证对象是 `dev-938c53f`，不能据此宣称正式 v0.2.8 发布包已包含全部修复。
+
+## 10. Terminal 游标隔离 E2E（2026-11-01）
+
+- Core：独立构建 `v0.2.8-rc.4.0.20261030125220-8a3f9e825abf+dirty`，独立端口 `127.0.0.1:18767`、临时数据目录、`ssh_config=internal` 专用 PTY Session。
+- Harness：独立端口 `127.0.0.1:8788`，引用同一 Core，仅启用受保护 Agent Session 控制；不连接模型或外部 MCP。
+- 初始历史 + 实时输出：`TestTerminalBridgeCoreIntegration` 通过；重新打开 Shell 恢复 `start=0,end=488728,bytes=488728`，实时 marker 可观测，桥游标前进。
+- Shell 结束：`TestTerminalBridgeCoreShellExit` 通过；专用 Shell 从打开游标 `965` 正常结束于 `terminal_done.cursor=2406`，状态为 `ended`。
+- 重复订阅：Core 真实内嵌 SSH Shell 测试在首个 marker 后对同一 WebSocket 再发 `watch_add`，收到第二个 `watch_ready` 并继续使用新游标，随后正常结束。
+- 输出洪峰：`TestTerminalBridgeCoreOutputFlood` 通过；20,000 行共 `482765` 字节，首字节 `11ms`，总计 `2.266s`，218 次轮询，`dropped_output_bytes=0`。
+- 回归：Harness `go test -race ./... -count=1` 与 Core `go test -race ./internal/webui -count=1` 通过。
+- 清理：Harness 与 Core 均按精确 PID/端口停止；`8788`、`18767` 已关闭；一次性 token、临时 store、日志、二进制和临时数据目录已删除。
+- 边界：该结果证明本地 Core 构建与 Desktop Go 桥的终端游标契约；不证明正式 Core 发布包、可见 Wails 窗口的新协议手工回归、认证或自动重连已就绪。
+
+## 11. 审批 + Terminal 组合回归（2026-11-01）
+
+- Core 集成 worktree：`D:\Harness\.worktrees\core-local-integration`，本地分支 `codex/core-local-integration`，基于 `fix/approval-correlation@938c53f`，终端补丁尚未提交。
+- 终端代码与独立 `fix/terminal-watch-cursor` worktree 的四个 Go 文件逐字一致；`docs/api.md` 与内嵌副本同时保留审批关联和终端游标契约且 SHA-256 一致。
+- Core 回归：`go test -race ./internal/approval ./internal/session ./internal/webui -count=1` 通过；`go test ./... -run '^$' -count=1` 全仓编译通过；`go vet ./...`、`go build ./...` 通过。
+- 组合构建：`v0.2.8-rc.4.0.20261030183716-938c53f4334d+dirty`，确认包含 `938c53f` 审批修复与本地终端补丁。
+- 终端 E2E：初始历史 `start=0,end=971`；Shell `opened=965 → ended=2421`；20,000 行共 `483418` 字节，首字节 `11ms`、总计 `3.711s`、358 次轮询，桥无丢弃。
+- 审批 E2E：`TestTermcpCoreApprovalReviewIntegration` 通过，并新增断言要求 pending 结果携带 `trusted approval_id`、匹配 `session_id`，且后续按该 ID 查询真实审批队列。
+- 审批严格契约：`TestTermcpCoreApprovalExpiryContract` 与 `TestTermcpCoreApprovalSessionDeathStateContract` 通过。
+- Harness 回归：`go test -race ./... -count=1` 通过；`go vet ./...`、`go build ./...` 通过。
+- 清理：组合 Harness/Core 按精确 PID/端口停止；组合临时 token、store、日志、二进制和测试目录已删除；`8788`、`18767` 无 LISTENING。

@@ -146,6 +146,76 @@ func TestAgentSessionRunReturnsAcceptedForApprovalPending(t *testing.T) {
 	}
 }
 
+func TestAgentSessionCancelRequiresAuthenticationRevisionAndIsIdempotent(t *testing.T) {
+	manager, err := agentsession.NewManager(eventlog.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := testAgentSessionHandler(t, manager, &agentTestInvoker{})
+	create := authorizedJSONRequest(http.MethodPost, "/v1/agent/sessions", `{"id":"cancel-me"}`)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, create)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
+	}
+
+	unauthenticated := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/agent/sessions/cancel-me/cancel",
+		strings.NewReader(`{"expected_revision":1}`),
+	)
+	unauthenticated.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, unauthenticated)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated cancel status = %d", response.Code)
+	}
+
+	missingRevision := authorizedJSONRequest(
+		http.MethodPost,
+		"/v1/agent/sessions/cancel-me/cancel",
+		`{}`,
+	)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, missingRevision)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("missing revision status = %d", response.Code)
+	}
+
+	cancel := authorizedJSONRequest(
+		http.MethodPost,
+		"/v1/agent/sessions/cancel-me/cancel",
+		`{"expected_revision":1}`,
+	)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, cancel)
+	if response.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Session agentsession.Snapshot `json:"session"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Session.State != agentsession.StateCancelled ||
+		body.Session.Cancellation == nil ||
+		body.Session.Cancellation.Phase != agentsession.CancellationBeforeDispatch {
+		t.Fatalf("cancel response = %+v", body)
+	}
+
+	repeated := authorizedJSONRequest(
+		http.MethodPost,
+		"/v1/agent/sessions/cancel-me/cancel",
+		`{"expected_revision":1}`,
+	)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, repeated)
+	if response.Code != http.StatusOK {
+		t.Fatalf("repeated cancel status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
 const agentControlToken = "0123456789abcdef0123456789abcdef"
 
 func testAgentSessionHandler(

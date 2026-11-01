@@ -57,7 +57,6 @@ func (s *Session) ResumeModel(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
 	s.mu.RLock()
 	snapshot := cloneSnapshot(s.snapshot)
 	checkpoint := cloneModelLoopCheckpoint(s.modelLoopCheckpoint)
@@ -92,6 +91,8 @@ func (s *Session) ResumeModel(
 		return ModelResult{Snapshot: snapshot}, err
 	}
 
+	runContext, runCancel := context.WithCancel(ctx)
+	defer runCancel()
 	s.mu.Lock()
 	if s.snapshot.State != StateUnknown || s.snapshot.Revision != snapshot.Revision ||
 		!equalModelLoopCheckpoint(s.modelLoopCheckpoint, checkpoint) ||
@@ -107,6 +108,8 @@ func (s *Session) ResumeModel(
 	s.modelLoop = loop
 	s.invoker = invoker
 	s.resumeStarted = true
+	s.runCancel = runCancel
+	s.toolDispatching = false
 	s.snapshot.State = StateRunning
 	s.snapshot.Revision++
 	s.snapshot.CurrentCallID = ""
@@ -118,6 +121,7 @@ func (s *Session) ResumeModel(
 	s.snapshot.FinishedAt = nil
 	started := cloneSnapshot(s.snapshot)
 	s.mu.Unlock()
+	defer s.endRunContext(runCancel)
 
 	if err := s.record(eventlog.TypeAgentSessionResumed, started, map[string]any{
 		"reason":              "manual_model_recovery",
@@ -126,7 +130,7 @@ func (s *Session) ResumeModel(
 	}); err != nil {
 		return ModelResult{Snapshot: started}, err
 	}
-	return s.runModelLoop(ctx, ModelResult{Snapshot: started})
+	return s.runModelLoop(runContext, ModelResult{Snapshot: started})
 }
 
 func rebuildRecoverableModelLoop(

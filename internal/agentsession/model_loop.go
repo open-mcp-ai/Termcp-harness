@@ -162,11 +162,13 @@ func (s *Session) RunModel(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	runContext, runCancel := context.WithCancel(ctx)
 
 	s.mu.Lock()
 	if s.snapshot.State != StateNew {
 		current := cloneSnapshot(s.snapshot)
 		s.mu.Unlock()
+		runCancel()
 		return ModelResult{Snapshot: current}, fmt.Errorf("%w: state is %s", ErrSessionNotNew, current.State)
 	}
 	now := s.now().UTC()
@@ -175,6 +177,8 @@ func (s *Session) RunModel(
 	s.snapshot.StartedAt = &now
 	s.invoker = invoker
 	s.resumeStarted = false
+	s.runCancel = runCancel
+	s.toolDispatching = false
 	s.modelLoop = &modelLoopState{
 		adapter: adapter,
 		tools:   normalizedTools,
@@ -192,13 +196,14 @@ func (s *Session) RunModel(
 	s.setModelLoopCheckpointLocked(ModelLoopStageModelRequesting)
 	started := cloneSnapshot(s.snapshot)
 	s.mu.Unlock()
+	defer s.endRunContext(runCancel)
 
 	if err := s.record(eventlog.TypeAgentSessionStarted, started, map[string]any{
 		"mode": "model_loop",
 	}); err != nil {
 		return ModelResult{Snapshot: started}, err
 	}
-	return s.runModelLoop(ctx, ModelResult{Snapshot: started})
+	return s.runModelLoop(runContext, ModelResult{Snapshot: started})
 }
 
 // ContinueModelLoop resumes only from trusted tool evidence already accepted by
@@ -299,6 +304,11 @@ func (s *Session) completeModelTurn(ctx context.Context, result ModelResult) (Mo
 		result.Snapshot = snapshot
 		return result, "", errors.Join(err, stateErr)
 	}
+	if s.cancellationRequested() {
+		snapshot, stateErr := s.transition(StateCancelled, "", "", eventlog.TypeAgentSessionCancelled)
+		result.Snapshot = snapshot
+		return result, "", errors.Join(context.Canceled, stateErr)
+	}
 	normalized, err := s.normalizeModelResponse(loop, response, iteration)
 	if err != nil {
 		snapshot, stateErr := s.failModel("invalid_model_response", err)
@@ -317,6 +327,12 @@ func (s *Session) completeModelTurn(ctx context.Context, result ModelResult) (Mo
 		s.mu.Unlock()
 		return result, "", errors.New("model Agent Loop state is missing")
 	}
+	if s.snapshot.State == StateCancelling {
+		s.mu.Unlock()
+		snapshot, stateErr := s.transition(StateCancelled, "", "", eventlog.TypeAgentSessionCancelled)
+		result.Snapshot = snapshot
+		return result, "", errors.Join(context.Canceled, stateErr)
+	}
 	s.modelLoop.messages = append(s.modelLoop.messages, normalized)
 	s.transcript = cloneModelMessages(s.modelLoop.messages)
 	s.snapshot.TranscriptMessages = len(s.transcript)
@@ -332,6 +348,7 @@ func (s *Session) completeModelTurn(ctx context.Context, result ModelResult) (Mo
 		s.snapshot.CurrentToolStatus = ""
 		s.snapshot.CurrentExecution = nil
 		s.snapshot.CurrentCompletion = ""
+		s.snapshot.Cancellation = nil
 		s.finalOutput = normalized.Content
 		s.snapshot.OutputBytes = len(s.finalOutput)
 		s.invoker = nil
@@ -444,10 +461,20 @@ func (s *Session) executePendingModelTool(ctx context.Context, result ModelResul
 		result.Snapshot = s.Snapshot()
 		return result, ErrInvokerRequired
 	}
+	if !s.beginToolDispatch() {
+		if s.cancellationRequested() {
+			snapshot, stateErr := s.transition(StateCancelled, "", "", eventlog.TypeAgentSessionCancelled)
+			result.Snapshot = snapshot
+			return result, stateErr
+		}
+		result.Snapshot = s.Snapshot()
+		return result, ErrInvalidState
+	}
 	outcome, invokeErr := invoker.Invoke(ctx, step)
 	result.Outcomes = append(result.Outcomes, outcome)
 	state, approvalID := stateForOutcome(outcome, invokeErr)
 	snapshot, stateErr := s.finishTool(step.CallID, state, approvalID, outcome.Call.Status)
+	s.setToolDispatching(false)
 	result.Snapshot = snapshot
 	joined := errors.Join(invokeErr, stateErr)
 	if state != StateRunning {

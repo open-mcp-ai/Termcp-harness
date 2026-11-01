@@ -118,6 +118,14 @@ func (m *Manager) Run(
 	return session.Run(ctx, invoker, steps)
 }
 
+func (m *Manager) Cancel(_ context.Context, id string, expectedRevision uint64) (Snapshot, error) {
+	session, err := m.Get(id)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return session.Cancel(expectedRevision)
+}
+
 func (m *Manager) RunModel(
 	ctx context.Context,
 	id string,

@@ -691,8 +691,127 @@ func TestNewSessionValidatesInputs(t *testing.T) {
 	}
 }
 
+func TestSessionCancelBeforeDispatchIsSafeAndIdempotent(t *testing.T) {
+	journal := eventlog.New()
+	session := newTestSession(t, journal)
+	cancelled, err := session.Cancel(session.Snapshot().Revision)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if cancelled.State != StateCancelled ||
+		cancelled.Cancellation == nil ||
+		cancelled.Cancellation.Phase != CancellationBeforeDispatch ||
+		cancelled.Cancellation.RemoteOutcomeUnknown ||
+		cancelled.Cancellation.ApprovalPending {
+		t.Fatalf("cancelled snapshot = %+v", cancelled)
+	}
+	repeated, err := session.Cancel(1)
+	if err != nil || repeated.Revision != cancelled.Revision || repeated.State != StateCancelled {
+		t.Fatalf("repeated Cancel() = %+v, error = %v", repeated, err)
+	}
+}
+
+func TestSessionCancelRejectsStaleRevision(t *testing.T) {
+	session := newTestSession(t, eventlog.New())
+	snapshot, err := session.Cancel(2)
+	if !errors.Is(err, ErrCancellationConflict) || snapshot.State != StateNew {
+		t.Fatalf("Cancel(stale) = %+v, error = %v", snapshot, err)
+	}
+}
+
+func TestSessionCancelDuringToolDispatchConvergesUnknown(t *testing.T) {
+	session := newTestSession(t, eventlog.New())
+	invoker := &cancelBlockingInvoker{started: make(chan struct{})}
+	done := make(chan Result, 1)
+	go func() {
+		result, _ := session.Run(context.Background(), invoker, []Step{{
+			CallID: "call-1", ServerID: "core", ToolName: "term",
+			Arguments: json.RawMessage(`{"cmd":"write"}`),
+		}})
+		done <- result
+	}()
+	select {
+	case <-invoker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tool dispatch did not start")
+	}
+	current := session.Snapshot()
+	requested, err := session.Cancel(current.Revision)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if requested.State != StateCancelling ||
+		requested.Cancellation == nil ||
+		requested.Cancellation.Phase != CancellationToolDispatch {
+		t.Fatalf("requested snapshot = %+v", requested)
+	}
+	select {
+	case result := <-done:
+		if result.Snapshot.State != StateUnknown ||
+			result.Snapshot.Cancellation == nil ||
+			!result.Snapshot.Cancellation.RemoteOutcomeUnknown {
+			t.Fatalf("final snapshot = %+v", result.Snapshot)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tool dispatch did not converge after cancel")
+	}
+}
+
+func TestSessionCancelWhileWaitingApprovalKeepsRemoteRiskVisible(t *testing.T) {
+	session, _ := sessionWaitingForApproval(t, eventlog.New())
+	cancelled, err := session.Cancel(session.Snapshot().Revision)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if cancelled.State != StateCancelled ||
+		cancelled.Cancellation == nil ||
+		cancelled.Cancellation.Phase != CancellationWaitingApproval ||
+		!cancelled.Cancellation.ApprovalPending {
+		t.Fatalf("cancelled snapshot = %+v", cancelled)
+	}
+	if _, err := session.ObserveApproval(cancelled.CurrentCallID, approval.Snapshot{
+		ID: "approval-1", CallID: cancelled.CurrentCallID, Status: approval.StatusApproved,
+		Decision: approval.DecisionApprove, Revision: 2,
+	}); err == nil {
+		t.Fatal("cancelled Session accepted a later approval transition")
+	}
+}
+
+func TestSessionCancelWhileWaitingExecutionMarksRemoteUnknown(t *testing.T) {
+	session, callID := sessionWaitingForApproval(t, eventlog.New())
+	waiting, err := session.ObserveApproval(callID, approval.Snapshot{
+		ID: "approval-1", CallID: callID, Status: approval.StatusApproved,
+		Decision: approval.DecisionApprove, Revision: 2,
+	})
+	if err != nil || waiting.State != StateWaitingExecution {
+		t.Fatalf("waiting execution = %+v, error = %v", waiting, err)
+	}
+	cancelled, err := session.Cancel(waiting.Revision)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if cancelled.State != StateCancelled ||
+		cancelled.Cancellation == nil ||
+		cancelled.Cancellation.Phase != CancellationWaitingExecution ||
+		!cancelled.Cancellation.RemoteOutcomeUnknown {
+		t.Fatalf("cancelled snapshot = %+v", cancelled)
+	}
+}
+
 type invocation struct {
 	Request toolpipeline.Request
+}
+
+type cancelBlockingInvoker struct {
+	started chan struct{}
+}
+
+func (i *cancelBlockingInvoker) Invoke(ctx context.Context, request toolpipeline.Request) (toolpipeline.Outcome, error) {
+	close(i.started)
+	<-ctx.Done()
+	return toolpipeline.Outcome{Call: toolcall.Snapshot{
+		ID: request.CallID, Status: toolcall.StatusUnknown,
+	}}, ctx.Err()
 }
 
 type sequenceInvoker struct {

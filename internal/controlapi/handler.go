@@ -47,6 +47,7 @@ type handlerOptions struct {
 	auth          *ApprovalAuthorizer
 	sessions      AgentSessionLister
 	sessionRunner AgentSessionRunner
+	canceller     AgentSessionCanceller
 	transcripts   AgentSessionTranscriptReader
 	invoker       agentsession.Invoker
 	modelRunner   AgentModelRunner
@@ -160,11 +161,18 @@ type AgentSessionRunner interface {
 	Run(context.Context, string, agentsession.Invoker, []agentsession.Step) (agentsession.Result, error)
 }
 
+type AgentSessionCanceller interface {
+	Cancel(context.Context, string, uint64) (agentsession.Snapshot, error)
+}
+
 func WithAgentSessionRunner(runner AgentSessionRunner, invoker agentsession.Invoker) Option {
 	return func(options *handlerOptions) {
 		options.sessionRunner = runner
 		options.sessions = runner
 		options.invoker = invoker
+		if canceller, ok := runner.(AgentSessionCanceller); ok {
+			options.canceller = canceller
+		}
 	}
 }
 
@@ -265,6 +273,10 @@ type agentSessionCreateRequest struct {
 
 type agentSessionRunRequest struct {
 	Steps []toolpipeline.Request `json:"steps"`
+}
+
+type agentSessionCancelRequest struct {
+	ExpectedRevision uint64 `json:"expected_revision"`
 }
 
 type agentCallSummary struct {
@@ -572,6 +584,45 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"session": session.Snapshot()})
+	})
+	mux.HandleFunc("POST /v1/agent/sessions/{id}/cancel", func(w http.ResponseWriter, request *http.Request) {
+		if config.canceller == nil || config.auth == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "Agent Session cancellation is disabled"})
+			return
+		}
+		if !authorizeMutation(w, request, config.auth) || !requireJSONContentType(w, request) {
+			return
+		}
+		var body agentSessionCancelRequest
+		if !decodeJSONBody(w, request, 64<<10, &body) {
+			return
+		}
+		if body.ExpectedRevision == 0 {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "expected_revision is required"})
+			return
+		}
+
+		cancelContext, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+		defer cancel()
+		snapshot, err := config.canceller.Cancel(
+			cancelContext,
+			strings.TrimSpace(request.PathValue("id")),
+			body.ExpectedRevision,
+		)
+		switch {
+		case errors.Is(err, agentsession.ErrSessionNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "Agent Session not found"})
+		case errors.Is(err, agentsession.ErrCancellationConflict):
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "Agent Session cancellation conflict"})
+		case err != nil:
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "Agent Session cancellation failed"})
+		default:
+			status := http.StatusOK
+			if snapshot.State == agentsession.StateCancelling {
+				status = http.StatusAccepted
+			}
+			writeJSON(w, status, map[string]any{"session": snapshot})
+		}
 	})
 	mux.HandleFunc("POST /v1/agent/sessions/{id}/run", func(w http.ResponseWriter, request *http.Request) {
 		if config.sessionRunner == nil || config.invoker == nil || config.auth == nil {

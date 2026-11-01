@@ -24,6 +24,7 @@ type State string
 const (
 	StateNew              State = "new"
 	StateRunning          State = "running"
+	StateCancelling       State = "cancelling"
 	StateWaitingApproval  State = "waiting_approval"
 	StateWaitingExecution State = "waiting_execution"
 	StateCompleted        State = "completed"
@@ -35,19 +36,37 @@ const (
 )
 
 var (
-	ErrInvalidState    = errors.New("invalid Agent Session state transition")
-	ErrInvokerRequired = errors.New("tool invoker is required")
-	ErrNoSteps         = errors.New("Agent Session requires at least one step")
-	ErrSessionNotNew   = errors.New("Agent Session has already run")
-	ErrModelRequired   = errors.New("model adapter is required")
-	ErrModelTools      = errors.New("model Agent Loop requires at least one explicit tool")
-	ErrModelInput      = errors.New("model Agent Loop requires non-empty input")
+	ErrInvalidState         = errors.New("invalid Agent Session state transition")
+	ErrInvokerRequired      = errors.New("tool invoker is required")
+	ErrNoSteps              = errors.New("Agent Session requires at least one step")
+	ErrSessionNotNew        = errors.New("Agent Session has already run")
+	ErrModelRequired        = errors.New("model adapter is required")
+	ErrModelTools           = errors.New("model Agent Loop requires at least one explicit tool")
+	ErrModelInput           = errors.New("model Agent Loop requires non-empty input")
+	ErrCancellationConflict = errors.New("Agent Session cancellation conflict")
 )
 
 type Step = toolpipeline.Request
 
 type Invoker interface {
 	Invoke(context.Context, toolpipeline.Request) (toolpipeline.Outcome, error)
+}
+
+type CancellationPhase string
+
+const (
+	CancellationBeforeDispatch   CancellationPhase = "before_dispatch"
+	CancellationModelRequest     CancellationPhase = "model_request"
+	CancellationToolDispatch     CancellationPhase = "tool_dispatch"
+	CancellationWaitingApproval  CancellationPhase = "waiting_approval"
+	CancellationWaitingExecution CancellationPhase = "waiting_execution"
+)
+
+type Cancellation struct {
+	RequestedAt          time.Time         `json:"requested_at"`
+	Phase                CancellationPhase `json:"phase"`
+	RemoteOutcomeUnknown bool              `json:"remote_outcome_unknown,omitempty"`
+	ApprovalPending      bool              `json:"approval_pending,omitempty"`
 }
 
 type Snapshot struct {
@@ -68,6 +87,7 @@ type Snapshot struct {
 	Recovered             bool                               `json:"recovered,omitempty"`
 	RecoveryReason        string                             `json:"recovery_reason,omitempty"`
 	ModelLoopRecovery     *ModelLoopRecoverySummary          `json:"model_loop_recovery,omitempty"`
+	Cancellation          *Cancellation                      `json:"cancellation,omitempty"`
 	StartedAt             *time.Time                         `json:"started_at,omitempty"`
 	FinishedAt            *time.Time                         `json:"finished_at,omitempty"`
 }
@@ -94,6 +114,8 @@ type Session struct {
 	transcript          []model.Message
 	finalOutput         string
 	persist             func() error
+	runCancel           context.CancelFunc
+	toolDispatching     bool
 }
 
 func New(id, coreSessionID string, journal *eventlog.Journal) (*Session, error) {
@@ -152,11 +174,13 @@ func (s *Session) Run(ctx context.Context, invoker Invoker, steps []Step) (Resul
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	runContext, runCancel := context.WithCancel(ctx)
 
 	s.mu.Lock()
 	if s.snapshot.State != StateNew {
 		current := cloneSnapshot(s.snapshot)
 		s.mu.Unlock()
+		runCancel()
 		return Result{Snapshot: current}, fmt.Errorf("%w: state is %s", ErrSessionNotNew, current.State)
 	}
 	now := s.now().UTC()
@@ -165,8 +189,11 @@ func (s *Session) Run(ctx context.Context, invoker Invoker, steps []Step) (Resul
 	s.snapshot.StartedAt = &now
 	s.invoker = invoker
 	s.resumeStarted = false
+	s.runCancel = runCancel
+	s.toolDispatching = false
 	started := cloneSnapshot(s.snapshot)
 	s.mu.Unlock()
+	defer s.endRunContext(runCancel)
 
 	if err := s.record(eventlog.TypeAgentSessionStarted, started, nil); err != nil {
 		return Result{Snapshot: started}, err
@@ -176,7 +203,7 @@ func (s *Session) Run(ctx context.Context, invoker Invoker, steps []Step) (Resul
 		Outcomes: make([]toolpipeline.Outcome, 0, len(steps)),
 		Snapshot: started,
 	}
-	return s.runSteps(ctx, invoker, steps, result)
+	return s.runSteps(runContext, invoker, steps, result)
 }
 
 func (s *Session) runSteps(
@@ -214,10 +241,20 @@ func (s *Session) runSteps(
 			return result, err
 		}
 
+		if !s.beginToolDispatch() {
+			if s.cancellationRequested() {
+				snapshot, stateErr := s.transition(StateCancelled, "", "", eventlog.TypeAgentSessionCancelled)
+				result.Snapshot = snapshot
+				return result, stateErr
+			}
+			result.Snapshot = s.Snapshot()
+			return result, ErrInvalidState
+		}
 		outcome, invokeErr := invoker.Invoke(ctx, step)
 		result.Outcomes = append(result.Outcomes, outcome)
 		state, approvalID := stateForOutcome(outcome, invokeErr)
 		snapshot, stateErr := s.finishTool(step.CallID, state, approvalID, outcome.Call.Status)
+		s.setToolDispatching(false)
 		result.Snapshot = snapshot
 		joinErr := errors.Join(invokeErr, stateErr)
 		if state != StateRunning {
@@ -231,6 +268,143 @@ func (s *Session) runSteps(
 	completed, err := s.complete()
 	result.Snapshot = completed
 	return result, err
+}
+
+// Cancel requests a user stop. It only reports a safe cancellation before any
+// tool side effect; a tool already being dispatched converges from its actual
+// result and remains unknown when that result cannot be proven.
+func (s *Session) Cancel(expectedRevision uint64) (Snapshot, error) {
+	if s == nil {
+		return Snapshot{}, errors.New("Agent Session is required")
+	}
+	s.mu.Lock()
+	current := cloneSnapshot(s.snapshot)
+	if current.State == StateCancelled || current.State == StateCancelling {
+		s.mu.Unlock()
+		return current, nil
+	}
+	if current.State.IsTerminal() {
+		s.mu.Unlock()
+		return current, fmt.Errorf("%w: %s is already terminal", ErrCancellationConflict, current.State)
+	}
+	if expectedRevision == 0 || current.Revision != expectedRevision {
+		s.mu.Unlock()
+		return current, fmt.Errorf(
+			"%w: expected revision %d, current revision %d",
+			ErrCancellationConflict,
+			expectedRevision,
+			current.Revision,
+		)
+	}
+
+	now := s.now().UTC()
+	phase := cancellationPhaseLocked(s)
+	s.snapshot.Cancellation = &Cancellation{
+		RequestedAt: now,
+		Phase:       phase,
+	}
+	if current.State == StateWaitingApproval {
+		s.snapshot.Cancellation.Phase = CancellationWaitingApproval
+		s.snapshot.Cancellation.ApprovalPending = true
+	}
+	if current.State == StateWaitingExecution {
+		s.snapshot.Cancellation.Phase = CancellationWaitingExecution
+		s.snapshot.Cancellation.RemoteOutcomeUnknown = true
+	}
+	s.snapshot.Revision++
+
+	var cancelRun context.CancelFunc
+	if current.State == StateRunning {
+		s.snapshot.State = StateCancelling
+		cancelRun = s.runCancel
+	} else {
+		s.snapshot.State = StateCancelled
+		s.snapshot.FinishedAt = &now
+		s.remainingSteps = nil
+		s.currentCompletion = ""
+		s.approvalRevision = 0
+		s.invoker = nil
+		s.runCancel = nil
+		s.toolDispatching = false
+		s.resumeStarted = false
+		s.modelLoop = nil
+		s.clearModelLoopCheckpointLocked()
+	}
+	requested := cloneSnapshot(s.snapshot)
+	s.mu.Unlock()
+
+	recordErr := s.record(eventlog.TypeAgentSessionCancelRequested, requested, map[string]any{
+		"phase":                  phase,
+		"approval_pending":       requested.Cancellation != nil && requested.Cancellation.ApprovalPending,
+		"remote_outcome_unknown": requested.Cancellation != nil && requested.Cancellation.RemoteOutcomeUnknown,
+	})
+	if cancelRun != nil {
+		cancelRun()
+		return requested, recordErr
+	}
+	cancelledErr := s.record(eventlog.TypeAgentSessionCancelled, requested, nil)
+	return requested, errors.Join(recordErr, cancelledErr)
+}
+
+func (s *Session) setToolDispatching(active bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.toolDispatching = active
+	s.mu.Unlock()
+}
+
+func (s *Session) beginToolDispatch() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.snapshot.State != StateRunning {
+		return false
+	}
+	s.toolDispatching = true
+	return true
+}
+
+func (s *Session) cancellationRequested() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snapshot.State == StateCancelling
+}
+
+func cancellationPhaseLocked(s *Session) CancellationPhase {
+	if s.toolDispatching {
+		return CancellationToolDispatch
+	}
+	if s.modelLoopCheckpoint != nil {
+		switch s.modelLoopCheckpoint.Stage {
+		case ModelLoopStageModelRequesting:
+			return CancellationModelRequest
+		case ModelLoopStageWaitingApproval:
+			return CancellationWaitingApproval
+		case ModelLoopStageWaitingExecution:
+			return CancellationWaitingExecution
+		case ModelLoopStageToolDispatching, ModelLoopStageToolObserved:
+			return CancellationToolDispatch
+		}
+	}
+	return CancellationBeforeDispatch
+}
+
+func (s *Session) endRunContext(cancel context.CancelFunc) {
+	cancel()
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.runCancel = nil
+	s.toolDispatching = false
+	s.mu.Unlock()
 }
 
 // ObserveApproval records a remotely confirmed approval transition. Approval
@@ -502,6 +676,8 @@ func (s *Session) ObserveToolResult(
 	default:
 		return Result{}, fmt.Errorf("tool status %q is not a terminal result", observed.Call.Status)
 	}
+	runContext, runCancel := context.WithCancel(ctx)
+	defer runCancel()
 
 	s.mu.Lock()
 	if s.lastResultCall == callID && s.lastResultStatus == observed.Call.Status {
@@ -567,6 +743,11 @@ func (s *Session) ObserveToolResult(
 		nextState = StateWaitingExecution
 	}
 	s.snapshot.State = nextState
+	active := nextState == StateRunning
+	if active {
+		s.runCancel = runCancel
+		s.toolDispatching = false
+	}
 	s.updateModelLoopCheckpointForStateLocked(nextState)
 	if terminal {
 		now := s.now().UTC()
@@ -580,6 +761,9 @@ func (s *Session) ObserveToolResult(
 	remaining := cloneSteps(s.remainingSteps)
 	snapshot := cloneSnapshot(s.snapshot)
 	s.mu.Unlock()
+	if active {
+		defer s.endRunContext(runCancel)
+	}
 
 	if err := s.record(eventlog.TypeAgentToolResultObserved, snapshot, map[string]any{
 		"tool_status": observed.Call.Status,
@@ -601,14 +785,14 @@ func (s *Session) ObserveToolResult(
 			errSnapshot, stateErr := s.failModel("tool_result_projection_failed", err)
 			return Result{Outcomes: []toolpipeline.Outcome{observed}, Snapshot: errSnapshot}, errors.Join(err, stateErr)
 		}
-		next, loopErr := s.runModelLoop(ctx, ModelResult{
+		next, loopErr := s.runModelLoop(runContext, ModelResult{
 			Outcomes: []toolpipeline.Outcome{observed},
 			Snapshot: s.Snapshot(),
 		})
 		return Result{Outcomes: next.Outcomes, Snapshot: next.Snapshot}, loopErr
 	}
 	return s.runSteps(
-		ctx,
+		runContext,
 		invoker,
 		remaining,
 		Result{Outcomes: []toolpipeline.Outcome{observed}, Snapshot: snapshot},
@@ -675,21 +859,41 @@ func (s *Session) finishTool(
 	toolStatus toolcall.Status,
 ) (Snapshot, error) {
 	s.mu.Lock()
-	if s.snapshot.State != StateRunning || s.snapshot.CurrentCallID != callID {
+	if (s.snapshot.State != StateRunning && s.snapshot.State != StateCancelling) ||
+		s.snapshot.CurrentCallID != callID {
 		snapshot := cloneSnapshot(s.snapshot)
 		s.mu.Unlock()
 		return snapshot, fmt.Errorf("%w: current call %q", ErrInvalidState, snapshot.CurrentCallID)
+	}
+	cancelRequested := s.snapshot.State == StateCancelling
+	if cancelRequested {
+		switch state {
+		case StateRunning:
+			state = StateCancelled
+		case StateUnknown:
+			if s.snapshot.Cancellation == nil {
+				s.snapshot.Cancellation = &Cancellation{
+					RequestedAt: s.now().UTC(),
+					Phase:       CancellationToolDispatch,
+				}
+			}
+			s.snapshot.Cancellation.RemoteOutcomeUnknown = true
+		default:
+			s.snapshot.Cancellation = nil
+		}
 	}
 	s.snapshot.State = state
 	s.snapshot.CurrentApprovalID = approvalID
 	s.snapshot.CurrentToolStatus = toolStatus
 	s.snapshot.Revision++
+	s.toolDispatching = false
 	s.updateModelLoopCheckpointForStateLocked(state)
 	if state.IsTerminal() {
 		now := s.now().UTC()
 		s.snapshot.FinishedAt = &now
 		s.remainingSteps = nil
 		s.invoker = nil
+		s.runCancel = nil
 		s.modelLoop = nil
 	} else {
 		s.snapshot.FinishedAt = nil
@@ -713,18 +917,25 @@ func (s *Session) finishTool(
 func (s *Session) transition(state State, callID, approvalID string, eventType eventlog.Type) (Snapshot, error) {
 	s.mu.Lock()
 	now := s.now().UTC()
+	cancellation := cloneCancellation(s.snapshot.Cancellation)
+	if state != StateCancelled {
+		cancellation = nil
+	}
 	s.snapshot.State = state
 	s.snapshot.CurrentCallID = callID
 	s.snapshot.CurrentApprovalID = approvalID
 	s.snapshot.CurrentToolStatus = ""
 	s.snapshot.CurrentExecution = nil
 	s.snapshot.CurrentCompletion = ""
+	s.snapshot.Cancellation = cancellation
 	s.snapshot.Revision++
 	s.snapshot.FinishedAt = &now
 	s.remainingSteps = nil
 	s.currentCompletion = ""
 	s.approvalRevision = 0
 	s.invoker = nil
+	s.runCancel = nil
+	s.toolDispatching = false
 	s.resumeStarted = false
 	s.modelLoop = nil
 	s.clearModelLoopCheckpointLocked()
@@ -748,12 +959,15 @@ func (s *Session) complete() (Snapshot, error) {
 	s.snapshot.CurrentToolStatus = ""
 	s.snapshot.CurrentExecution = nil
 	s.snapshot.CurrentCompletion = ""
+	s.snapshot.Cancellation = nil
 	s.snapshot.Revision++
 	s.snapshot.FinishedAt = &now
 	s.remainingSteps = nil
 	s.currentCompletion = ""
 	s.approvalRevision = 0
 	s.invoker = nil
+	s.runCancel = nil
+	s.toolDispatching = false
 	s.resumeStarted = false
 	s.modelLoop = nil
 	s.clearModelLoopCheckpointLocked()
@@ -838,7 +1052,16 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	}
 	snapshot.CurrentExecution = cloneApprovalExecution(snapshot.CurrentExecution)
 	snapshot.ModelLoopRecovery = cloneRecoverySummary(snapshot.ModelLoopRecovery)
+	snapshot.Cancellation = cloneCancellation(snapshot.Cancellation)
 	return snapshot
+}
+
+func cloneCancellation(cancellation *Cancellation) *Cancellation {
+	if cancellation == nil {
+		return nil
+	}
+	cloned := *cancellation
+	return &cloned
 }
 
 func cloneApprovalExecution(execution *approval.Execution) *approval.Execution {

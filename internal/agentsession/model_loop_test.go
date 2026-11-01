@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
@@ -220,6 +221,48 @@ func TestSessionModelLoopRejectsUnknownToolWithoutInvoking(t *testing.T) {
 	assertModelLoopEvents(t, journal, false)
 }
 
+func TestSessionModelLoopCancelWhileRequestingStopsBeforeToolDispatch(t *testing.T) {
+	session := newTestSession(t, eventlog.New())
+	tools := testModelTools(t)
+	adapter := &blockingModelAdapter{started: make(chan struct{})}
+	invoker := &modelToolInvoker{}
+	done := make(chan ModelResult, 1)
+	go func() {
+		result, _ := session.RunModel(
+			context.Background(), adapter, invoker, tools, "wait for model", ModelRunOptions{},
+		)
+		done <- result
+	}()
+	select {
+	case <-adapter.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("model request did not start")
+	}
+	current := session.Snapshot()
+	requested, err := session.Cancel(current.Revision)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if requested.State != StateCancelling ||
+		requested.Cancellation == nil ||
+		requested.Cancellation.Phase != CancellationModelRequest {
+		t.Fatalf("requested snapshot = %+v", requested)
+	}
+	select {
+	case result := <-done:
+		if result.Snapshot.State != StateCancelled ||
+			result.Snapshot.Cancellation == nil ||
+			result.Snapshot.Cancellation.RemoteOutcomeUnknown {
+			t.Fatalf("final snapshot = %+v", result.Snapshot)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("model request did not stop after cancel")
+	}
+	if len(invoker.Calls()) != 0 {
+		t.Fatalf("tool executed after model cancellation: %+v", invoker.Calls())
+	}
+}
+
 func TestProjectModelMessagesKeepsToolCallBlocksTogether(t *testing.T) {
 	messages := []model.Message{
 		{Role: model.RoleSystem, Content: "system"},
@@ -307,6 +350,16 @@ type scriptedModelAdapter struct {
 	mu        sync.Mutex
 	responses []model.Response
 	requests  []model.Request
+}
+
+type blockingModelAdapter struct {
+	started chan struct{}
+}
+
+func (a *blockingModelAdapter) Complete(ctx context.Context, _ model.Request) (model.Response, error) {
+	close(a.started)
+	<-ctx.Done()
+	return model.Response{}, ctx.Err()
 }
 
 func (f *scriptedModelAdapter) Complete(_ context.Context, request model.Request) (model.Response, error) {

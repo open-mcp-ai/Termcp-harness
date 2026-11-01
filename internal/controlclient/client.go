@@ -471,6 +471,43 @@ func (c *Client) CreateAgentSession(
 	return result, nil
 }
 
+func (c *Client) CancelAgentSession(
+	ctx context.Context,
+	id string,
+	expectedRevision uint64,
+	token string,
+) (AgentSessionEnvelope, error) {
+	if c == nil {
+		return AgentSessionEnvelope{}, errors.New("control client is required")
+	}
+	if err := validateMutationToken(token); err != nil {
+		return AgentSessionEnvelope{}, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 256 {
+		return AgentSessionEnvelope{}, errors.New("Agent Session ID is required")
+	}
+	if expectedRevision == 0 {
+		return AgentSessionEnvelope{}, errors.New("Agent Session revision is required")
+	}
+	body, err := json.Marshal(map[string]any{"expected_revision": expectedRevision})
+	if err != nil {
+		return AgentSessionEnvelope{}, err
+	}
+	var result AgentSessionEnvelope
+	if _, err := c.postAgentJSON(
+		ctx,
+		"/v1/agent/sessions/"+url.PathEscape(id)+"/cancel",
+		body,
+		token,
+		[]int{http.StatusOK, http.StatusAccepted},
+		&result,
+	); err != nil {
+		return AgentSessionEnvelope{}, err
+	}
+	return result, nil
+}
+
 func (c *Client) RunAgentSession(
 	ctx context.Context,
 	id string,

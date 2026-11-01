@@ -3,6 +3,7 @@ package agentsession
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -141,6 +142,131 @@ func TestPersistentManagerRecoversInflightSessionAsUnknown(t *testing.T) {
 	}
 }
 
+func TestRestoreInterruptedCancellationKeepsRemoteRiskUnknown(t *testing.T) {
+	store, err := NewFileStore(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestedAt := time.Now().UTC()
+	if err := store.Save([]PersistedSession{{
+		Snapshot: Snapshot{
+			ID:            "cancel-restart",
+			State:         StateCancelling,
+			Revision:      7,
+			CurrentCallID: "call-1",
+			Cancellation: &Cancellation{
+				RequestedAt: requestedAt,
+				Phase:       CancellationToolDispatch,
+			},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManagerWithPersistence(eventlog.New(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := manager.Get("cancel-restart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.State != StateUnknown ||
+		!snapshot.Recovered ||
+		snapshot.RecoveryReason != persistenceRecoveryReason ||
+		snapshot.Cancellation == nil ||
+		!snapshot.Cancellation.RemoteOutcomeUnknown {
+		t.Fatalf("restored cancellation = %+v", snapshot)
+	}
+}
+
+func TestSessionPersistenceFailureBeforeToolDispatchRecoversUnknownWithoutSideEffect(t *testing.T) {
+	persistence := &failingSessionPersistence{failAt: 3}
+	manager, err := NewManagerWithPersistence(eventlog.New(), persistence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Create("persist-before-dispatch", "core-1"); err != nil {
+		t.Fatal(err)
+	}
+	invoker := &modelToolInvoker{statuses: []toolcall.Status{toolcall.StatusSucceeded}}
+	_, err = manager.Run(context.Background(), "persist-before-dispatch", invoker, []Step{{
+		CallID:    "persist-call-before",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":"pwd"}`),
+	}})
+	if err == nil {
+		t.Fatal("Run() succeeded despite persistence failure")
+	}
+	if len(invoker.Calls()) != 0 {
+		t.Fatalf("tool executed before dispatch persistence succeeded: %+v", invoker.Calls())
+	}
+
+	persistence.setFailure(0)
+	restored, err := NewManagerWithPersistence(eventlog.New(), persistence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := restored.Get("persist-before-dispatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.State != StateUnknown || !snapshot.Recovered ||
+		snapshot.RecoveryReason != persistenceRecoveryReason {
+		t.Fatalf("restored snapshot = %+v", snapshot)
+	}
+}
+
+func TestSessionPersistenceFailureAfterToolExecutionRecoversUnknownWithoutReplay(t *testing.T) {
+	persistence := &failingSessionPersistence{failAt: 4}
+	manager, err := NewManagerWithPersistence(eventlog.New(), persistence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Create("persist-after-dispatch", "core-1"); err != nil {
+		t.Fatal(err)
+	}
+	invoker := &modelToolInvoker{statuses: []toolcall.Status{toolcall.StatusSucceeded}}
+	_, err = manager.Run(context.Background(), "persist-after-dispatch", invoker, []Step{{
+		CallID:    "persist-call-after",
+		ServerID:  "termcp-core",
+		ToolName:  "term",
+		Arguments: json.RawMessage(`{"cmd":"pwd"}`),
+	}})
+	if err == nil {
+		t.Fatal("Run() succeeded despite persistence failure")
+	}
+	if calls := invoker.Calls(); len(calls) != 1 || calls[0].CallID != "persist-call-after" {
+		t.Fatalf("tool calls = %+v, want exactly one", calls)
+	}
+
+	persistence.setFailure(0)
+	restored, err := NewManagerWithPersistence(eventlog.New(), persistence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := restored.Get("persist-after-dispatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.State != StateUnknown || !snapshot.Recovered ||
+		snapshot.CurrentToolStatus != toolcall.StatusUnknown {
+		t.Fatalf("restored snapshot = %+v", snapshot)
+	}
+	if _, err := restored.Run(context.Background(), "persist-after-dispatch", invoker, []Step{{
+		CallID: "persist-call-replay", ServerID: "termcp-core", ToolName: "term",
+		Arguments: json.RawMessage(`{"cmd":"pwd"}`),
+	}}); !errors.Is(err, ErrSessionNotNew) {
+		t.Fatalf("restored Session replay error = %v", err)
+	}
+	if len(invoker.Calls()) != 1 {
+		t.Fatalf("restored Session replayed tool calls: %+v", invoker.Calls())
+	}
+}
+
 func TestFileStoreRejectsOversizedState(t *testing.T) {
 	store, err := NewFileStore(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
@@ -268,6 +394,52 @@ type blockingPersistence struct {
 	active            int
 	maxActive         int
 	savedIDs          [][]string
+}
+
+type failingSessionPersistence struct {
+	mu     sync.Mutex
+	items  []PersistedSession
+	calls  int
+	failAt int
+}
+
+func (p *failingSessionPersistence) Load() ([]PersistedSession, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return clonePersistedSessionsForTest(p.items), nil
+}
+
+func (p *failingSessionPersistence) Save(sessions []PersistedSession) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	if p.failAt > 0 && p.calls == p.failAt {
+		return errors.New("session persistence unavailable")
+	}
+	p.items = clonePersistedSessionsForTest(sessions)
+	return nil
+}
+
+func (p *failingSessionPersistence) setFailure(failAt int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.failAt = failAt
+	p.calls = 0
+}
+
+func clonePersistedSessionsForTest(sessions []PersistedSession) []PersistedSession {
+	if sessions == nil {
+		return nil
+	}
+	data, err := json.Marshal(sessions)
+	if err != nil {
+		panic(err)
+	}
+	var cloned []PersistedSession
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		panic(err)
+	}
+	return cloned
 }
 
 func (p *blockingPersistence) Load() ([]PersistedSession, error) {

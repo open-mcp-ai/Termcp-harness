@@ -431,6 +431,54 @@ func TestClientCreatesAndRunsAgentSessionWithoutRetrying(t *testing.T) {
 	}
 }
 
+func TestClientCancelsAgentSessionWithRevision(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/agent/sessions/session-1/cancel" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode cancel body: %v", err)
+		}
+		if body["expected_revision"] != float64(7) {
+			t.Errorf("cancel body = %+v", body)
+		}
+		writeTestJSON(w, http.StatusAccepted, map[string]any{
+			"session": map[string]any{
+				"id": "session-1", "state": "cancelling", "revision": 8,
+				"cancellation": map[string]any{
+					"phase": "tool_dispatch", "remote_outcome_unknown": true,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.CancelAgentSession(context.Background(), "session-1", 7, token)
+	if err != nil {
+		t.Fatalf("CancelAgentSession() error = %v", err)
+	}
+	if requests != 1 || result.Session.State != "cancelling" ||
+		result.Session.Cancellation == nil ||
+		!result.Session.Cancellation.RemoteOutcomeUnknown {
+		t.Fatalf("requests = %d, result = %+v", requests, result)
+	}
+	if _, err := client.CancelAgentSession(context.Background(), "session-1", 0, token); err == nil {
+		t.Fatal("zero revision was accepted")
+	}
+}
+
 func TestClientRunsAgentLoopWithExplicitBudgets(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

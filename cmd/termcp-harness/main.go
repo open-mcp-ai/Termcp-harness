@@ -33,7 +33,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
-var version = "dev"
+var version = "v0.1.3"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -79,8 +79,11 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if args[0] == "resume" {
 		return runAgentResume(ctx, args[1:], stdout, stderr)
 	}
+	if args[0] == "cancel" {
+		return runAgentCancel(ctx, args[1:], stdout, stderr)
+	}
 	if args[0] != "run" {
-		return errors.New("usage: termcp-harness agent <run|loop|resume>")
+		return errors.New("usage: termcp-harness agent <run|loop|resume|cancel>")
 	}
 	flags := flag.NewFlagSet("agent run", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -117,6 +120,39 @@ func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	result, err := client.RunAgentSession(ctx, *id, steps, token)
 	if err != nil {
 		return fmt.Errorf("run Agent Session: %w", err)
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func runAgentCancel(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("agent cancel", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	runtimeEndpoint := flags.String("runtime", "http://127.0.0.1:8787", "Harness Runtime control API origin")
+	id := flags.String("id", "", "Agent Session ID")
+	revision := flags.Uint64("revision", 0, "current Agent Session revision")
+	tokenFile := flags.String("token-file", "", "file containing the control bearer token")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	if strings.TrimSpace(*id) == "" || *revision == 0 || strings.TrimSpace(*tokenFile) == "" {
+		return errors.New("id, revision, and token-file are required")
+	}
+	token, err := readApprovalToken(*tokenFile)
+	if err != nil {
+		return err
+	}
+	client, err := controlclient.New(*runtimeEndpoint)
+	if err != nil {
+		return err
+	}
+	result, err := client.CancelAgentSession(ctx, *id, *revision, token)
+	if err != nil {
+		return fmt.Errorf("cancel Agent Session: %w", err)
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")

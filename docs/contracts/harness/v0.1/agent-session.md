@@ -1,6 +1,6 @@
 # Harness Agent Session v1（草案）
 
-> 状态：确定性 Headless Session、受保护创建/运行、有界模型 Agent Loop、完成级别、审批结果自动消费、步骤恢复、`waiting_execution` 人工核对入口、可选本地 Session/transcript 持久化和活动 Loop 安全检查点人工恢复已覆盖；Event Journal 可独立持久化，审批队列及活动 Loop 自动恢复尚未接入。
+> 状态：确定性 Headless Session、受保护创建/运行、受保护停止任务、有界模型 Agent Loop、完成级别、审批结果自动消费、步骤恢复、`waiting_execution` 人工核对入口、可选本地 Session/transcript 持久化和活动 Loop 安全检查点人工恢复已覆盖；Event Journal 可独立持久化，审批队列及活动 Loop 自动恢复尚未接入。
 >
 > 日期：2026-10-30
 >
@@ -17,6 +17,7 @@ Agent Session 属于 Harness Runtime，不是 Core Session、Shell 或终端通�
 ```text
 new
   └─ running
+       ├─ cancelling ─ cancelled / unknown
        ├─ completed
        ├─ waiting_approval
        │    └─ waiting_execution（审批已确认，但工具结果仍未知）
@@ -33,6 +34,12 @@ new
 规则：
 
 - 一个 Session 只能从 `new` 运行一次。
+- `POST /v1/agent/sessions/{id}/cancel` 使用 revision CAS 请求停止。`new`、`waiting_approval`、`waiting_execution` 可立即收敛；`running` 先进入 `cancelling`，由当前执行边界决定最终状态。
+- 模型请求中停止不会派发工具；工具派发前通过原子 dispatch gate 停止时进入 `cancelled`。
+- 工具已派发后停止不宣称远端已终止。可信成功结果记录实际副作用后进入 `cancelled`；无法证明结果时进入 `unknown`，并设置 `remote_outcome_unknown=true`。
+- 等待审批时停止不等于拒绝审批。Session 可进入 `cancelled`，但 `approval_pending=true`，原远端审批事实仍须单独处理。
+- 等待执行时停止只停止 Harness 继续推进；`remote_outcome_unknown=true`，不得据此重试工具或假定 Core 未执行。
+- `cancelled` 和 `cancelling` 的重复停止请求幂等返回；其他终态返回冲突。
 - 模型 Loop 与确定性步骤共用同一个 Session 状态机和工具流水线，不能并发启动。
 - 每个 Step 都经过 `internal/toolpipeline`，不能绕过校验、策略和事件记录。
 - 第一个非成功工具状态会停止后续步骤。
@@ -78,6 +85,7 @@ new
 - `agent.model.failed`
 - `agent.session.waiting_approval`
 - `agent.session.waiting_execution`
+- `agent.session.cancel_requested`
 - `agent.session.approval_observed`
 - `agent.tool.result_observed`
 - `agent.session.resumed`
@@ -95,7 +103,7 @@ Session 事件以 Agent Session ID 为 `subject_id`，当前工具调用 ID 为 
 
 - 未配置 `--session-store-file` 时，Session、模型上下文和回复只在内存中，Runtime 重启后丢失。
 - 配置 `--session-store-file` 后，终态 Session、模型消息、最终回复和活动 Loop checkpoint 可恢复；Session Store v2 兼容读取 v1。Session 文件本身不含事件日志。另配 `--event-log-file` 可恢复有界事件窗口与 sequence，`--approval-store-file` 可恢复审批历史；审批队列、MCP 连接和活动工具执行仍不回放。
-- Runtime 重启时仍处于 `running`、`waiting_approval` 或 `waiting_execution` 的 Session 收敛为 `unknown`，设置 `recovered=true` 和 `recovery_reason=runtime_restart`，不推断远端正处于成功、失败或已取消状态。
+- Runtime 重启时仍处于 `running`、`cancelling`、`waiting_approval` 或 `waiting_execution` 的 Session 收敛为 `unknown`，设置 `recovered=true` 和 `recovery_reason=runtime_restart`；已有取消请求时同时设置 `cancellation.remote_outcome_unknown=true`，不推断远端正处于成功、失败或已取消状态。
 - checkpoint 诊断本身不等于恢复执行。安全边界只表示 checkpoint 尚未产生新的工具副作用；恢复仍必须由用户显式触发并经过工具目录/transcript 一致性校验。
 - 模型 Adapter 首个实现为 OpenAI-compatible 非流式 completion；已通过 DashScope 真实模型与 Core 只读工具纵向闭环，其他第三方服务、真实流式输出和 provider 级重试尚未验证。
 - 已持久化原始模型消息，但没有摘要或对话继续执行；事件轨迹需要独立配置 Event Journal Store。
@@ -104,6 +112,7 @@ Session 事件以 Agent Session ID 为 `subject_id`，当前工具调用 ID 为 
 - 安全 checkpoint 的人工恢复已由 Session 单元测试、Control API、Control Client、Desktop 固定桥和前端交互测试覆盖；真实 Wails 窗口验证记录见 Desktop Shell 契约。
 - `POST /v1/agent/sessions` 与 `POST /v1/agent/sessions/{id}/run` 必须携带 Bearer token；运行还必须配置精确 allowlist 的工具策略文件。
 - CLI 通过 `termcp-harness agent run` 创建并运行显式步骤，通过 `agent loop` 创建并运行模型循环；运行响应不直接回传工具正文，模型循环只返回最终模型输出、Session 快照和调用摘要。
+- CLI 通过 `termcp-harness agent cancel --id ... --revision ... --token-file ...` 请求停止。停止请求不关闭 Core Session、Shell 或远端审批。
 - Harness 已接入 Termcp 结构化 `execution` 的自动消费、人工只读核对与步骤恢复；字段缺失时保持 `waiting_execution`，不根据输出文本或时间补造结果。
 - Termcp 0.2.8 开发基线在 review 结果中提供可信 `approval_id`；Harness 只在字段存在且通过校验时建立关联，并继续以结构化 `execution` 消费执行结果。
 
@@ -122,3 +131,11 @@ Session 事件以 Agent Session ID 为 `subject_id`，当前工具调用 ID 为 
 - 批准前目标文件不存在；批准后 Core 返回 `execution=succeeded` 并实际写入。
 - Harness 自动消费执行结果，Session 进入 `completed`。
 - 事件中审批成功、Session 恢复和 Session 完成各记录一次。
+
+2026-11-01 完成停止任务真实 HTTP 闭环：
+
+- 临时 Core Session 上通过精确 allowlist 派发长时 `term run`，Session 进入 `running` 且记录当前 call。
+- 受保护 `/cancel` 接受 revision 后返回 `202`、`state=cancelling`、`phase=tool_dispatch`。
+- 工具调用随后收敛为 `unknown`；最终 Session 为 `unknown`、`current_tool_status=unknown`、`cancellation.remote_outcome_unknown=true`，未自动重试。
+- 另一个尚未运行的 Agent Session 以 `before_dispatch` 停止，直接进入 `cancelled`，无远端执行风险。
+- 测试结束后关闭专用 Core Session、停止临时 Harness，并删除一次性 token、策略、日志和临时目录。

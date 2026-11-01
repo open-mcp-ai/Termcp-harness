@@ -250,6 +250,9 @@ func restoreSession(journal *eventlog.Journal, item PersistedSession) (*Session,
 		session.snapshot.Recovered = true
 		session.snapshot.RecoveryReason = persistenceRecoveryReason
 		session.snapshot.CurrentCompletion = ""
+		if session.snapshot.Cancellation != nil {
+			session.snapshot.Cancellation.RemoteOutcomeUnknown = true
+		}
 	}
 	return session, nil
 }

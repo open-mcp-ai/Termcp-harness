@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
@@ -86,8 +87,14 @@ func TestTermcpCoreApprovalReviewIntegration(t *testing.T) {
 	if err != nil || approvedOutcome.Call.Status != toolcall.StatusApprovalPending {
 		t.Fatalf("review pending outcome = %+v, error = %v, result = %s", approvedOutcome.Call, err, resultText(t, approvedOutcome.Result))
 	}
+	if approvedOutcome.Approval == nil ||
+		approvedOutcome.Approval.Correlation != approval.CorrelationTrusted ||
+		approvedOutcome.Approval.ID == "" ||
+		approvedOutcome.Approval.SessionID != effectSessionID {
+		t.Fatalf("review pending approval correlation = %+v", approvedOutcome.Approval)
+	}
 	assertRemoteFileMissing(t, observerHost, observerSessionID, approvedPath)
-	pending := waitForApprovalState(t, baseURL, effectSessionID, "", "pending", 5*time.Second)
+	pending := waitForApprovalState(t, baseURL, effectSessionID, approvedOutcome.Approval.ID, "pending", 5*time.Second)
 
 	// The pending request must survive the submitting MCP connection closing.
 	if err := effectHost.Close(); err != nil {

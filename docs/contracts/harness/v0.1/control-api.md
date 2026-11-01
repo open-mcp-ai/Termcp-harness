@@ -8,7 +8,7 @@
 
 ## 边界
 
-本版提供 Harness Runtime 生命周期、事件窗口、MCP Server 列表、已绑定 Core 的只读身份快照、审批快照、受保护决定/Execution 刷新/`unknown` 只读收敛，以及受保护的 Agent Session 创建、确定性运行、模型 Loop 和安全检查点人工恢复。它不提供任意工具调用、模型 endpoint 修改或远程控制入口。
+本版提供 Harness Runtime 生命周期、事件窗口、MCP Server 列表、已绑定 Core 的只读身份快照、审批快照、受保护决定/Execution 刷新/`unknown` 只读收敛，以及受保护的 Agent Session 创建、确定性运行、显式停止、模型 Loop 和安全检查点人工恢复。它不提供任意工具调用、模型 endpoint 修改或远程控制入口。
 
 事件补拉入口见 `event-log.md`；事件模型也已单独版本化。
 
@@ -402,6 +402,60 @@ go run ./cmd/termcp-harness approvals reconcile `
 响应只包含 Session 状态、call ID、工具状态、结果字节数和 `is_error`，不回传原始工具结果正文。完成返回 `200`；等待审批或执行结果返回 `202`。该端点在未配置工具策略或未启用 Bearer token 时返回 `503`。
 
 `required_completion` 默认 `accepted`，表示工具调用本身得到可信结果即可继续。需要命令或操作真正执行完成时设为 `completed`；对 shell 输入，`execution=submitted` 只能满足 `accepted`。
+
+## `POST /v1/agent/sessions/{id}/cancel`
+
+请求停止一个 Agent Session。默认关闭；只有 Runtime 配置受限审批 token 时启用，且请求必须携带 Bearer token、`Content-Type: application/json`。
+
+```json
+{
+  "expected_revision": 4
+}
+```
+
+语义：
+
+- `new`、`waiting_approval`、`waiting_execution` 可立即进入 `cancelled`。
+- `running` 先返回 `cancelling`；模型请求中或工具派发前的取消最终进入 `cancelled`，已派发工具无法证明结果时进入 `unknown`。
+- 停止任务不关闭 Core Session、Shell、终端桥或远端审批。
+- 等审批时取消保留 `cancellation.approval_pending=true`；等执行时取消保留 `cancellation.remote_outcome_unknown=true`。
+- 重复取消 `cancelling` / `cancelled` 幂等；revision 不一致或其他终态返回 `409`。
+
+响应：
+
+```json
+{
+  "session": {
+    "id": "agent-session-1",
+    "state": "cancelling",
+    "revision": 5,
+    "current_call_id": "call-1",
+    "cancellation": {
+      "requested_at": "2026-11-01T08:20:16Z",
+      "phase": "tool_dispatch"
+    }
+  }
+}
+```
+
+- `200`：已进入可信 `cancelled`，或幂等返回既有取消状态。
+- `202`：进入 `cancelling`，等待当前执行边界收敛。
+- `400`：缺少 `expected_revision`。
+- `401` / `403`：认证失败或携带 `Origin`。
+- `404`：Session 不存在。
+- `409`：revision 冲突或 Session 已进入其他终态。
+- `415`：Content-Type 不是 JSON。
+- `503`：取消能力或认证控制未配置。
+
+CLI：
+
+```powershell
+go run ./cmd/termcp-harness agent cancel `
+  --runtime http://127.0.0.1:8787 `
+  --id '<agent-session-id>' `
+  --revision 5 `
+  --token-file '<private-token-file>'
+```
 
 ## `POST /v1/agent/sessions/{id}/loop`
 
