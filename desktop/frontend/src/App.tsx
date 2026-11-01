@@ -49,7 +49,7 @@ import {
 } from "./canvas";
 import { persistEventCursor, resolveEventCursor } from "./eventCursor";
 import { mergeRealtimeEvents } from "./events";
-import { agentStateLabel, messages } from "./i18n";
+import { agentStateLabel, coreStateLabel, messages } from "./i18n";
 import {
   ActivityPanel,
   AgentPanel,
@@ -1060,7 +1060,9 @@ export default function App() {
   const runtimeState = error ? "unknown" : data?.runtime.state ?? "new";
   const runtimeLabel = runtimeState === "unknown" ? messages.state.unknown : stateCopy[runtimeState];
   const coreState = data?.core.core?.state ?? "unavailable";
-  const coreLabel = data?.core.core ? data.core.core.state : messages.core.unconfigured;
+  const coreLabel = data?.core.core
+    ? coreStateLabel(data.core.core.state)
+    : messages.core.unconfigured;
   const mcpStatus = mcpStatusSummary(data?.mcp);
 
   return (

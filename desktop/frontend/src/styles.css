@@ -1835,6 +1835,51 @@ h1 {
   color: var(--canvas-text);
 }
 
+.session-state-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  color: #687d92;
+  border-top: 1px solid #e0e8f0;
+  border-bottom: 1px solid #e0e8f0;
+}
+
+.session-state-strip > span {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 3px;
+  border-right: 1px solid #e0e8f0;
+  white-space: nowrap;
+}
+
+.session-state-strip > span:last-child {
+  border-right: 0;
+}
+
+.session-state-strip strong {
+  font: 700 12px/1 "Cascadia Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-state-strip > span:nth-child(1) strong {
+  color: #247f6d;
+}
+
+.session-state-strip > span:nth-child(2) strong {
+  color: #ad6d1d;
+}
+
+.session-state-strip > span:nth-child(3) strong {
+  color: #bf4a40;
+}
+
+.session-state-strip > span:nth-child(4) strong {
+  color: #66798d;
+}
+
 .canvas-list {
   display: grid;
   gap: 6px;

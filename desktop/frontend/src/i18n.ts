@@ -132,7 +132,7 @@ const zhCN = {
     daemon: "运行模式",
     daemonMode: "daemon",
     standaloneMode: "standalone",
-    unconfigured: "未配置 Core 身份",
+    unconfigured: "未配置",
     unconfiguredBody: "使用 --core-endpoint 或 --mcp-endpoint 指定 Core。",
     notIdentified: "尚未完成识别",
     notIdentifiedBody: "Harness 还没有获得可信的 Core 实例身份快照。",

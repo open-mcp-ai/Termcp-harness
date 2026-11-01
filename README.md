@@ -4,7 +4,7 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 
 它不是第二个 Core，也不是 Termcp-Desktop 的复制品。Core 是真实执行平面，Harness Runtime 是 Agent/工具控制平面，Terminal Workspace 是第一方体验平面。
 
-当前 `dev` 开发快照：`v0.1.4`。版本演进与验证记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前 `dev` 开发快照：`v0.1.5`。版本演进与验证记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 当前状态
 

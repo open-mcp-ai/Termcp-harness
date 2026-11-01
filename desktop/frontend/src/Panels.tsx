@@ -358,18 +358,30 @@ function SessionsPanelView({
   return (
     <div className="canvas-module sessions-module">
       {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
-      <div className="canvas-summary-row">
-        <span title="包含运行中和正在停止的 Session">
-          <i className="status-dot ready" />运行/停止 <strong>{counts.active}</strong>
+      <div className="canvas-summary-row session-state-strip" role="group" aria-label="Session 状态汇总">
+        <span
+          title="运行中或正在停止"
+          aria-label={`活动 ${counts.active} 个：运行中或正在停止`}
+        >
+          活动 <strong>{counts.active}</strong>
         </span>
-        <span title="包含等待审批和等待执行结果的 Session">
-          <i className="status-dot warning" />等待审批/执行 <strong>{counts.waiting}</strong>
+        <span
+          title="等待审批或等待执行结果"
+          aria-label={`等待 ${counts.waiting} 个：等待审批或等待执行结果`}
+        >
+          等待 <strong>{counts.waiting}</strong>
         </span>
-        <span title="包含失败、已阻断和已过期的 Session">
-          <i className="status-dot danger" />失败/阻断/过期 <strong>{counts.abnormal}</strong>
+        <span
+          title="失败、已阻断或已过期"
+          aria-label={`异常 ${counts.abnormal} 个：失败、已阻断或已过期`}
+        >
+          异常 <strong>{counts.abnormal}</strong>
         </span>
-        <span title="结果无法确认，既不是失败也不是已执行">
-          <i className="status-dot neutral" />结果未知 <strong>{counts.unknown}</strong>
+        <span
+          title="结果无法确认，既不是失败也不是已执行"
+          aria-label={`未知 ${counts.unknown} 个：结果无法确认，既不是失败也不是已执行`}
+        >
+          未知 <strong>{counts.unknown}</strong>
         </span>
       </div>
       {sessions.length === 0 ? (
