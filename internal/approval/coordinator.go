@@ -13,11 +13,15 @@ import (
 )
 
 var (
-	ErrApprovalNotFound       = errors.New("approval request not found")
-	ErrApprovalNotPending     = errors.New("approval request is not pending")
-	ErrApprovalUncorrelated   = errors.New("approval request has no trusted correlation")
-	ErrApprovalDuplicate      = errors.New("approval request is already tracked")
-	ErrApprovalClientRequired = errors.New("approval decision client is required")
+	ErrApprovalNotFound          = errors.New("approval request not found")
+	ErrApprovalNotPending        = errors.New("approval request is not pending")
+	ErrApprovalUncorrelated      = errors.New("approval request has no trusted correlation")
+	ErrApprovalDuplicate         = errors.New("approval request is already tracked")
+	ErrApprovalClientRequired    = errors.New("approval decision client is required")
+	ErrApprovalLookupUnavailable = errors.New("approval execution lookup is unavailable")
+	ErrApprovalNotApproved       = errors.New("approval request is not approved")
+	ErrApprovalNotUnknown        = errors.New("approval request is not unknown")
+	ErrApprovalPersistence       = errors.New("approval history persistence failed")
 )
 
 const (
@@ -49,6 +53,12 @@ func WithDecisionObserver(observer DecisionObserver) CoordinatorOption {
 	}
 }
 
+func WithPersistence(persistence Persistence) CoordinatorOption {
+	return func(coordinator *Coordinator) {
+		coordinator.persistence = persistence
+	}
+}
+
 // WithReconciliation configures read-only execution reconciliation after an
 // approval is confirmed. It never resubmits a decision or side effect.
 func WithReconciliation(interval, timeout time.Duration) CoordinatorOption {
@@ -65,6 +75,18 @@ type Tracked struct {
 	Reference Reference `json:"reference"`
 }
 
+type ExecutionRefresh struct {
+	Approval Tracked `json:"approval"`
+	Changed  bool    `json:"changed"`
+	Complete bool    `json:"complete"`
+}
+
+type Reconciliation struct {
+	Approval Tracked `json:"approval"`
+	Changed  bool    `json:"changed"`
+	Resolved bool    `json:"resolved"`
+}
+
 type trackedRequest struct {
 	mu          sync.Mutex
 	request     *Request
@@ -76,12 +98,14 @@ type trackedRequest struct {
 // comes from DecisionClient; this type never infers a decision from time or text.
 type Coordinator struct {
 	mu           sync.RWMutex
+	persistMu    sync.Mutex
 	byID         map[string]*trackedRequest
 	byCall       map[string]string
 	journal      *eventlog.Journal
 	client       DecisionClient
 	lookupClient DecisionLookup
 	observer     DecisionObserver
+	persistence  Persistence
 
 	reconcileInterval time.Duration
 	reconcileTimeout  time.Duration
@@ -116,6 +140,15 @@ func NewCoordinator(
 	}
 	if coordinator.reconcileInterval <= 0 || coordinator.reconcileTimeout <= 0 {
 		return nil, errors.New("approval reconciliation interval and timeout must be positive")
+	}
+	if coordinator.persistence != nil {
+		persisted, err := coordinator.persistence.Load()
+		if err != nil {
+			return nil, fmt.Errorf("load approval history: %w", err)
+		}
+		if err := coordinator.restorePersisted(persisted); err != nil {
+			return nil, err
+		}
 	}
 	return coordinator, nil
 }
@@ -153,6 +186,10 @@ func (c *Coordinator) Track(callID string, reference Reference) (Tracked, error)
 
 	tracked := Tracked{Request: request.Snapshot(), Reference: cloneReference(reference)}
 	if err := c.record(eventlog.TypeApprovalTracked, tracked); err != nil {
+		c.remove(reference.ID, callID)
+		return Tracked{}, err
+	}
+	if err := c.persist(); err != nil {
 		c.remove(reference.ID, callID)
 		return Tracked{}, err
 	}
@@ -245,8 +282,27 @@ func (c *Coordinator) Decide(
 		return submitting, err
 	}
 	if err := c.record(eventlog.TypeApprovalSubmitting, trackedSnapshot(entry)); err != nil {
+		unknown, stateErr := entry.request.Apply(submitting.Revision, EventMarkUnknown)
+		tracked := trackedSnapshot(entry)
+		persistErr := c.persist()
 		entry.mu.Unlock()
-		return submitting, err
+		c.notify(tracked)
+		return unknown, errors.Join(err, stateErr, persistErr)
+	}
+	if err := c.persist(); err != nil {
+		unknown, stateErr := entry.request.Apply(submitting.Revision, EventMarkUnknown)
+		tracked := trackedSnapshot(entry)
+		entry.mu.Unlock()
+		_ = c.recordWithExtra(
+			eventlog.TypeApprovalUnknown,
+			tracked,
+			map[string]any{"reason": "history_persistence_failed"},
+		)
+		c.notify(tracked)
+		return unknown, errors.Join(
+			fmt.Errorf("%w: record submitting state: %v", ErrApprovalPersistence, err),
+			stateErr,
+		)
 	}
 	entry.mu.Unlock()
 
@@ -283,10 +339,11 @@ func (c *Coordinator) confirmRemote(
 			trackedSnapshot(entry),
 			map[string]any{"reason": "contradictory_remote_state"},
 		)
+		persistErr := c.persist()
 		tracked := trackedSnapshot(entry)
 		entry.mu.Unlock()
 		c.notify(tracked)
-		return unknown, errors.Join(err, recordErr)
+		return unknown, errors.Join(err, recordErr, persistErr)
 	}
 	confirmed, err := entry.request.Apply(expected, event)
 	if err != nil {
@@ -305,13 +362,14 @@ func (c *Coordinator) confirmRemote(
 		}
 	}
 	recordErr := c.record(eventType, trackedSnapshot(entry))
+	persistErr := c.persist()
 	tracked := trackedSnapshot(entry)
 	entry.mu.Unlock()
 	c.notify(tracked)
 	if confirmed.Status == StatusApproved {
 		c.startReconciliation(entry)
 	}
-	return confirmed, recordErr
+	return confirmed, errors.Join(recordErr, persistErr)
 }
 
 func (c *Coordinator) markUnknown(entry *trackedRequest, expected Revision, cause error) (Snapshot, error) {
@@ -322,10 +380,11 @@ func (c *Coordinator) markUnknown(entry *trackedRequest, expected Revision, caus
 		return unknown, errors.Join(cause, err)
 	}
 	recordErr := c.record(eventlog.TypeApprovalUnknown, trackedSnapshot(entry))
+	persistErr := c.persist()
 	tracked := trackedSnapshot(entry)
 	entry.mu.Unlock()
 	c.notify(tracked)
-	return unknown, errors.Join(cause, recordErr)
+	return unknown, errors.Join(cause, recordErr, persistErr)
 }
 
 func (c *Coordinator) lookup(id string) (*trackedRequest, error) {
@@ -338,6 +397,84 @@ func (c *Coordinator) lookup(id string) (*trackedRequest, error) {
 	return entry, nil
 }
 
+func (c *Coordinator) persist() error {
+	if c == nil || c.persistence == nil {
+		return nil
+	}
+	c.persistMu.Lock()
+	defer c.persistMu.Unlock()
+
+	c.mu.RLock()
+	snapshot := make(map[string]*trackedRequest, len(c.byID))
+	for id, entry := range c.byID {
+		snapshot[id] = entry
+	}
+	c.mu.RUnlock()
+	approvals := sortedTrackedApprovals(snapshot)
+	if err := validatePersistedApprovals(approvals); err != nil {
+		return fmt.Errorf("%w: %v", ErrApprovalPersistence, err)
+	}
+	if err := c.persistence.Save(approvals); err != nil {
+		return fmt.Errorf("%w: %v", ErrApprovalPersistence, err)
+	}
+	return nil
+}
+
+func (c *Coordinator) restorePersisted(approvals []PersistedApproval) error {
+	if len(approvals) == 0 {
+		return nil
+	}
+	if err := validatePersistedApprovals(approvals); err != nil {
+		return fmt.Errorf("restore approval history: %w", err)
+	}
+	converted := make([]*trackedRequest, 0)
+	for _, persisted := range approvals {
+		snapshot := cloneRequestSnapshot(persisted.Request)
+		originalStatus := snapshot.Status
+		snapshot.Recovered = true
+		snapshot.RecoveryReason = approvalRecoveryReason
+		if originalStatus == StatusPending || originalStatus == StatusSubmitting {
+			snapshot.Status = StatusUnknown
+			snapshot.Revision++
+			snapshot.Execution = nil
+		}
+		request, err := restoreRequest(snapshot)
+		if err != nil {
+			return fmt.Errorf("restore approval %q: %w", snapshot.ID, err)
+		}
+		entry := &trackedRequest{
+			request:   request,
+			reference: cloneReference(persisted.Reference),
+		}
+		if _, exists := c.byID[snapshot.ID]; exists {
+			return fmt.Errorf("duplicate persisted approval ID %q", snapshot.ID)
+		}
+		if existingID, exists := c.byCall[snapshot.CallID]; exists {
+			return fmt.Errorf("duplicate persisted approval call ID %q linked to %q",
+				snapshot.CallID, existingID)
+		}
+		c.byID[snapshot.ID] = entry
+		c.byCall[snapshot.CallID] = snapshot.ID
+		if originalStatus == StatusPending || originalStatus == StatusSubmitting {
+			converted = append(converted, entry)
+		}
+	}
+	for _, entry := range converted {
+		tracked := trackedSnapshot(entry)
+		if err := c.recordWithExtra(
+			eventlog.TypeApprovalUnknown,
+			tracked,
+			map[string]any{"reason": approvalRecoveryReason},
+		); err != nil {
+			return fmt.Errorf("record recovered approval %q: %w", tracked.Request.ID, err)
+		}
+	}
+	if err := c.persist(); err != nil {
+		return fmt.Errorf("persist recovered approval history: %w", err)
+	}
+	return nil
+}
+
 // TrustedCorrelationObserved reports whether at least one approval reference
 // has passed the explicit trusted-correlation check. Unknown or conflicting
 // references are never registered.
@@ -348,6 +485,138 @@ func (c *Coordinator) TrustedCorrelationObserved() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.byID) > 0
+}
+
+// RefreshExecution performs one read-only lookup of an approved request's
+// authoritative execution state. It never resubmits the approval decision or
+// the approved tool call. A successful refresh always notifies the observer so
+// an Agent Session may resume from already-trusted evidence, including when the
+// execution snapshot itself did not change.
+func (c *Coordinator) RefreshExecution(ctx context.Context, id string) (ExecutionRefresh, error) {
+	if c == nil {
+		return ExecutionRefresh{}, errors.New("approval coordinator is required")
+	}
+	if c.lookupClient == nil {
+		return ExecutionRefresh{}, ErrApprovalLookupUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	entry, err := c.lookup(id)
+	if err != nil {
+		return ExecutionRefresh{}, err
+	}
+	entry.mu.Lock()
+	current := entry.request.Snapshot()
+	entry.mu.Unlock()
+	if current.Status != StatusApproved {
+		return ExecutionRefresh{Approval: trackedSnapshot(entry)}, fmt.Errorf(
+			"%w: status is %s", ErrApprovalNotApproved, current.Status,
+		)
+	}
+
+	complete, changed, refreshErr := c.refreshExecution(ctx, entry)
+	tracked := trackedSnapshot(entry)
+	refresh := ExecutionRefresh{Approval: tracked, Changed: changed, Complete: complete}
+	if changed {
+		c.notify(tracked)
+	}
+	if refreshErr != nil {
+		c.recordReconciliationFailure(entry, "manual_refresh_failed", refreshErr)
+		return refresh, refreshErr
+	}
+	recordErr := c.recordWithExtra(eventlog.TypeApprovalExecutionRefreshed, tracked, map[string]any{
+		"changed":            changed,
+		"execution_complete": complete,
+	})
+	if !changed {
+		c.notify(tracked)
+	}
+	return refresh, recordErr
+}
+
+// ReconcileUnknown performs one explicit read-only authority lookup for an
+// approval whose local state is unknown. It never submits a decision or replays
+// the approved tool call. A remote pending state remains unknown.
+func (c *Coordinator) ReconcileUnknown(ctx context.Context, id string) (Reconciliation, error) {
+	if c == nil {
+		return Reconciliation{}, errors.New("approval coordinator is required")
+	}
+	if c.lookupClient == nil {
+		return Reconciliation{}, ErrApprovalLookupUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	entry, err := c.lookup(id)
+	if err != nil {
+		return Reconciliation{}, err
+	}
+	entry.mu.Lock()
+	current := entry.request.Snapshot()
+	entry.mu.Unlock()
+	if current.Status != StatusUnknown {
+		return Reconciliation{Approval: trackedSnapshot(entry)}, fmt.Errorf(
+			"%w: status is %s", ErrApprovalNotUnknown, current.Status,
+		)
+	}
+
+	remote, lookupErr := c.lookupClient.Lookup(ctx, id)
+	if lookupErr != nil {
+		c.recordReconciliationFailure(entry, "read_only_lookup_failed", lookupErr)
+		return Reconciliation{Approval: trackedSnapshot(entry)}, lookupErr
+	}
+	if remote.Status == StatusPending || remote.Status == StatusUnknown {
+		entry.mu.Lock()
+		current = entry.request.Snapshot()
+		if current.Status != StatusUnknown {
+			entry.mu.Unlock()
+			return Reconciliation{Approval: trackedSnapshot(entry)}, fmt.Errorf(
+				"%w: status changed to %s during reconciliation",
+				ErrApprovalNotUnknown, current.Status,
+			)
+		}
+		recordErr := c.recordReconciliation(entry, remote.Status, false, false)
+		tracked := trackedSnapshot(entry)
+		entry.mu.Unlock()
+		return Reconciliation{Approval: tracked, Changed: false, Resolved: false}, recordErr
+	}
+
+	event, err := reconciliationConfirmation(remote.Status)
+	if err != nil {
+		c.recordReconciliationFailure(entry, "read_only_lookup_contradiction", err)
+		return Reconciliation{Approval: trackedSnapshot(entry)}, err
+	}
+
+	entry.mu.Lock()
+	current = entry.request.Snapshot()
+	if current.Status != StatusUnknown {
+		entry.mu.Unlock()
+		return Reconciliation{Approval: trackedSnapshot(entry)}, fmt.Errorf(
+			"%w: status changed to %s during reconciliation",
+			ErrApprovalNotUnknown, current.Status,
+		)
+	}
+	_, stateErr := entry.request.Apply(current.Revision, event)
+	if stateErr != nil {
+		entry.mu.Unlock()
+		c.recordReconciliationFailure(entry, "read_only_lookup_contradiction", stateErr)
+		return Reconciliation{Approval: trackedSnapshot(entry)}, stateErr
+	}
+	var executionErr error
+	if remote.Status == StatusApproved && remote.Execution != nil {
+		_, executionErr = entry.request.SetExecution(remote.Execution)
+	}
+	recordErr := c.recordReconciliation(entry, remote.Status, true, true)
+	persistErr := c.persist()
+	tracked := trackedSnapshot(entry)
+	entry.mu.Unlock()
+	c.notify(tracked)
+	return Reconciliation{
+		Approval: tracked,
+		Changed:  true,
+		Resolved: true,
+	}, errors.Join(executionErr, recordErr, persistErr)
 }
 
 func (c *Coordinator) startReconciliation(entry *trackedRequest) {
@@ -386,7 +655,10 @@ func (c *Coordinator) reconcileExecution(entry *trackedRequest) {
 		case <-timer.C:
 		}
 
-		done, err := c.refreshExecution(ctx, entry)
+		done, changed, err := c.refreshExecution(ctx, entry)
+		if changed {
+			c.notify(trackedSnapshot(entry))
+		}
 		if err != nil {
 			lastErr = err
 		} else {
@@ -402,52 +674,52 @@ func (c *Coordinator) reconcileExecution(entry *trackedRequest) {
 	}
 }
 
-func (c *Coordinator) refreshExecution(ctx context.Context, entry *trackedRequest) (bool, error) {
+func (c *Coordinator) refreshExecution(ctx context.Context, entry *trackedRequest) (bool, bool, error) {
 	entry.mu.Lock()
 	current := entry.request.Snapshot()
 	approvalID := entry.reference.ID
 	entry.mu.Unlock()
 	if current.Status != StatusApproved {
-		return true, nil
+		return true, false, nil
 	}
 
 	remote, err := c.lookupClient.Lookup(ctx, approvalID)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if remote.Status != StatusApproved {
-		return true, fmt.Errorf("approved approval reconciled to %s", remote.Status)
+		return true, false, fmt.Errorf("approved approval reconciled to %s", remote.Status)
 	}
 	if remote.Execution == nil {
-		return false, nil
+		return false, false, nil
 	}
 
 	entry.mu.Lock()
 	latest := entry.request.Snapshot()
 	if latest.Status != StatusApproved {
 		entry.mu.Unlock()
-		return true, nil
+		return true, false, nil
 	}
 	if err := ValidateExecutionTransition(latest.Execution, remote.Execution); err != nil {
 		entry.mu.Unlock()
-		return true, err
+		return true, false, err
 	}
 	if executionsEqual(latest.Execution, remote.Execution) {
 		settled := executionReconciliationComplete(remote.Execution)
 		entry.mu.Unlock()
-		return settled, nil
+		return settled, false, nil
 	}
 	updated, err := entry.request.SetExecution(remote.Execution)
 	if err != nil {
 		entry.mu.Unlock()
-		return true, err
+		return true, false, err
 	}
 	tracked := trackedSnapshot(entry)
 	entry.mu.Unlock()
 
 	recordErr := c.record(eventlog.TypeApprovalExecutionObserved, tracked)
-	c.notify(tracked)
-	return executionReconciliationComplete(updated.Execution), recordErr
+	persistErr := c.persist()
+	return executionReconciliationComplete(updated.Execution), true, errors.Join(recordErr, persistErr)
 }
 
 func needsExecutionReconciliation(snapshot Snapshot) bool {
@@ -500,6 +772,23 @@ func (c *Coordinator) recordReconciliationFailure(entry *trackedRequest, reason 
 	})
 }
 
+func (c *Coordinator) recordReconciliation(
+	entry *trackedRequest,
+	remoteStatus Status,
+	changed, resolved bool,
+) error {
+	return c.recordWithExtra(
+		eventlog.TypeApprovalReconciled,
+		trackedSnapshot(entry),
+		map[string]any{
+			"reason":        "read_only_lookup",
+			"remote_status": string(remoteStatus),
+			"changed":       changed,
+			"resolved":      resolved,
+		},
+	)
+}
+
 func errorBytes(err error) int {
 	if err == nil {
 		return 0
@@ -526,13 +815,15 @@ func (c *Coordinator) recordWithExtra(
 	extra map[string]any,
 ) error {
 	payload := map[string]any{
-		"status":      tracked.Request.Status,
-		"decision":    tracked.Request.Decision,
-		"revision":    tracked.Request.Revision,
-		"call_id":     tracked.Request.CallID,
-		"session_id":  tracked.Reference.SessionID,
-		"expires_at":  tracked.Reference.ExpiresAt,
-		"correlation": tracked.Reference.Correlation,
+		"status":          tracked.Request.Status,
+		"decision":        tracked.Request.Decision,
+		"revision":        tracked.Request.Revision,
+		"call_id":         tracked.Request.CallID,
+		"session_id":      tracked.Reference.SessionID,
+		"expires_at":      tracked.Reference.ExpiresAt,
+		"correlation":     tracked.Reference.Correlation,
+		"recovered":       tracked.Request.Recovered,
+		"recovery_reason": tracked.Request.RecoveryReason,
 	}
 	if execution := tracked.Request.Execution; execution != nil {
 		payload["execution_state"] = execution.State
@@ -627,5 +918,20 @@ func confirmationFor(decision Decision, remote Status) (Event, eventlog.Type, er
 		return EventCancelConfirmed, eventlog.TypeApprovalCancelled, nil
 	default:
 		return "", "", fmt.Errorf("remote approval state %q does not confirm a decision", remote)
+	}
+}
+
+func reconciliationConfirmation(status Status) (Event, error) {
+	switch status {
+	case StatusApproved:
+		return EventConfirmApproved, nil
+	case StatusRejected:
+		return EventConfirmRejected, nil
+	case StatusExpired:
+		return EventExpireConfirmed, nil
+	case StatusCancelled:
+		return EventCancelConfirmed, nil
+	default:
+		return "", fmt.Errorf("remote approval state %q does not resolve an unknown approval", status)
 	}
 }

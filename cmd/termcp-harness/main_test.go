@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
@@ -30,6 +31,24 @@ func TestVersionCommand(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestSameHTTPOriginScopesCredentialReuse(t *testing.T) {
+	tests := []struct {
+		left  string
+		right string
+		want  bool
+	}{
+		{"http://127.0.0.1:18765/stream", "http://127.0.0.1:18765", true},
+		{"http://127.0.0.1:18765/stream", "http://127.0.0.1:18766", false},
+		{"http://127.0.0.1:18765/stream", "https://127.0.0.1:18765", false},
+		{"http://127.0.0.1:18765/stream", "http://localhost:18765", false},
+	}
+	for _, test := range tests {
+		if got := sameHTTPOrigin(test.left, test.right); got != test.want {
+			t.Fatalf("sameHTTPOrigin(%q, %q) = %v, want %v", test.left, test.right, got, test.want)
+		}
 	}
 }
 
@@ -133,6 +152,19 @@ func TestReadApprovalTokenRejectsEmptyAndOversizedFiles(t *testing.T) {
 	}
 }
 
+func TestServeApprovalStoreRequiresCore(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "approvals.json")
+	var stderr bytes.Buffer
+	err := runServe(
+		context.Background(),
+		[]string{"--approval-store-file", storePath},
+		&stderr,
+	)
+	if err == nil || !strings.Contains(err.Error(), "requires a configured Core") {
+		t.Fatalf("runServe() error = %v", err)
+	}
+}
+
 func TestApprovalsDecideCommand(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -199,6 +231,146 @@ func TestApprovalsDecideRejectsInvalidDecision(t *testing.T) {
 	}
 }
 
+func TestApprovalsRefreshCommand(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/approvals/approval-1/execution/refresh" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization header mismatch")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"approval": map[string]any{
+				"request": map[string]any{
+					"id": "approval-1", "call_id": "call-1", "status": "approved",
+					"decision": "approve", "revision": 3,
+					"execution": map[string]any{"state": "succeeded"},
+				},
+				"reference": map[string]any{"correlation": "trusted", "approval_id": "approval-1"},
+			},
+			"changed": true, "complete": true,
+		})
+	}))
+	defer server.Close()
+
+	tokenPath := filepath.Join(t.TempDir(), "approval-token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"approvals", "refresh",
+		"--runtime", server.URL,
+		"--id", "approval-1",
+		"--token-file", tokenPath,
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if strings.Contains(stdout.String(), token) || strings.Contains(stderr.String(), token) {
+		t.Fatal("approval token appeared in command output")
+	}
+	var result controlclient.ApprovalRefreshResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if !result.Changed || !result.Complete ||
+		result.Approval.Request.Execution == nil ||
+		result.Approval.Request.Execution.State != "succeeded" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAgentLoopCommand(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization header mismatch")
+		}
+		switch request.URL.Path {
+		case "/v1/agent/sessions":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session": map[string]any{"id": "session-1", "state": "new", "revision": 1},
+			})
+		case "/v1/agent/sessions/session-1/loop":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Errorf("decode request: %v", err)
+			}
+			if body["input"] != "inspect the workspace" ||
+				body["max_iterations"] != float64(2) ||
+				body["max_tool_calls"] != float64(3) {
+				t.Errorf("body = %+v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session": map[string]any{
+					"id": "session-1", "state": "completed", "revision": 5,
+					"model_turns": 2, "model_tool_calls": 1,
+				},
+				"output": "finished",
+				"calls":  []any{},
+			})
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "approval-token")
+	inputPath := filepath.Join(dir, "prompt.txt")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inputPath, []byte("  inspect the workspace\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"agent", "loop",
+		"--runtime", server.URL,
+		"--id", "session-1",
+		"--input-file", inputPath,
+		"--token-file", tokenPath,
+		"--max-iterations", "2",
+		"--max-tool-calls", "3",
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if strings.Contains(stdout.String(), token) || strings.Contains(stderr.String(), token) {
+		t.Fatal("control token appeared in command output")
+	}
+	var result controlclient.AgentLoopResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if result.Output != "finished" || result.Session.State != "completed" ||
+		result.Session.ModelTurns != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestServeRequiresCompleteModelLoopConfiguration(t *testing.T) {
+	tests := [][]string{
+		{"--model-endpoint", "http://127.0.0.1:11434/v1/chat/completions"},
+		{"--model-id", "test-model"},
+		{"--model-endpoint", "http://127.0.0.1:11434/v1/chat/completions", "--model-id", "test-model"},
+		{"--model-token-file", "token"},
+	}
+	for _, args := range tests {
+		var stderr bytes.Buffer
+		if err := runServe(context.Background(), args, &stderr); err == nil {
+			t.Fatalf("runServe(%v) error = nil", args)
+		}
+	}
+}
+
 func TestLoadToolPolicyRequiresExactAllowlist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tool-policy.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -228,6 +400,99 @@ func TestLoadToolPolicyRequiresExactAllowlist(t *testing.T) {
 	})
 	if err != nil || blocked.Allowed {
 		t.Fatalf("blocked decision = %+v, error = %v", blocked, err)
+	}
+}
+
+func TestApprovalsReconcileCommand(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/approvals/approval-1/reconcile" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization header mismatch")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"approval": map[string]any{
+				"request": map[string]any{
+					"id": "approval-1", "call_id": "call-1", "status": "rejected",
+					"decision": "reject", "revision": 3,
+				},
+				"reference": map[string]any{"correlation": "trusted", "approval_id": "approval-1"},
+			},
+			"changed": true, "resolved": true,
+		})
+	}))
+	defer server.Close()
+
+	tokenPath := filepath.Join(t.TempDir(), "approval-token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"approvals", "reconcile",
+		"--runtime", server.URL,
+		"--id", "approval-1",
+		"--token-file", tokenPath,
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	var result controlclient.ApprovalReconciliationResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if !result.Changed || !result.Resolved ||
+		result.Approval.Request.Status != approval.StatusRejected {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAgentResumeCommand(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/agent/sessions/session-1/loop/resume" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session": map[string]any{
+				"id": "session-1", "state": "completed", "revision": 9,
+				"model_turns": 3, "model_tool_calls": 1,
+			},
+			"output": "resumed",
+			"calls": []any{map[string]any{
+				"call_id": "model-call-1", "status": "succeeded",
+			}},
+		})
+	}))
+	defer server.Close()
+	tokenPath := filepath.Join(t.TempDir(), "control-token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{
+		"agent", "resume",
+		"--runtime", server.URL,
+		"--id", "session-1",
+		"--token-file", tokenPath,
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	var result controlclient.AgentLoopResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode resume output: %v\n%s", err, stdout.String())
+	}
+	if result.Output != "resumed" || result.Session.State != "completed" {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

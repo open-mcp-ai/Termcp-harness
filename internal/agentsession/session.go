@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
+	"github.com/open-mcp-ai/termcp-harness/internal/model"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
@@ -38,6 +39,9 @@ var (
 	ErrInvokerRequired = errors.New("tool invoker is required")
 	ErrNoSteps         = errors.New("Agent Session requires at least one step")
 	ErrSessionNotNew   = errors.New("Agent Session has already run")
+	ErrModelRequired   = errors.New("model adapter is required")
+	ErrModelTools      = errors.New("model Agent Loop requires at least one explicit tool")
+	ErrModelInput      = errors.New("model Agent Loop requires non-empty input")
 )
 
 type Step = toolpipeline.Request
@@ -57,6 +61,13 @@ type Snapshot struct {
 	CurrentToolStatus     toolcall.Status                    `json:"current_tool_status,omitempty"`
 	CurrentExecution      *approval.Execution                `json:"current_execution,omitempty"`
 	CurrentCompletion     toolpipeline.CompletionRequirement `json:"current_completion,omitempty"`
+	ModelTurns            int                                `json:"model_turns,omitempty"`
+	ModelToolCalls        int                                `json:"model_tool_calls,omitempty"`
+	TranscriptMessages    int                                `json:"transcript_messages,omitempty"`
+	OutputBytes           int                                `json:"output_bytes,omitempty"`
+	Recovered             bool                               `json:"recovered,omitempty"`
+	RecoveryReason        string                             `json:"recovery_reason,omitempty"`
+	ModelLoopRecovery     *ModelLoopRecoverySummary          `json:"model_loop_recovery,omitempty"`
 	StartedAt             *time.Time                         `json:"started_at,omitempty"`
 	FinishedAt            *time.Time                         `json:"finished_at,omitempty"`
 }
@@ -67,17 +78,22 @@ type Result struct {
 }
 
 type Session struct {
-	mu                sync.RWMutex
-	snapshot          Snapshot
-	journal           *eventlog.Journal
-	now               func() time.Time
-	remainingSteps    []Step
-	lastResultCall    string
-	lastResultStatus  toolcall.Status
-	currentCompletion toolpipeline.CompletionRequirement
-	approvalRevision  approval.Revision
-	invoker           Invoker
-	resumeStarted     bool
+	mu                  sync.RWMutex
+	snapshot            Snapshot
+	journal             *eventlog.Journal
+	now                 func() time.Time
+	remainingSteps      []Step
+	lastResultCall      string
+	lastResultStatus    toolcall.Status
+	currentCompletion   toolpipeline.CompletionRequirement
+	approvalRevision    approval.Revision
+	invoker             Invoker
+	resumeStarted       bool
+	modelLoop           *modelLoopState
+	modelLoopCheckpoint *modelLoopCheckpoint
+	transcript          []model.Message
+	finalOutput         string
+	persist             func() error
 }
 
 func New(id, coreSessionID string, journal *eventlog.Journal) (*Session, error) {
@@ -346,11 +362,13 @@ func (s *Session) ObserveApproval(callID string, observed approval.Snapshot) (Sn
 		s.snapshot.CurrentToolStatus = toolStatus
 	}
 	s.snapshot.Revision++
+	s.updateModelLoopCheckpointForStateLocked(nextState)
 	if terminal {
 		now := s.now().UTC()
 		s.snapshot.FinishedAt = &now
 		s.remainingSteps = nil
 		s.invoker = nil
+		s.modelLoop = nil
 	} else {
 		s.snapshot.FinishedAt = nil
 	}
@@ -419,7 +437,7 @@ func (s *Session) startAutomaticResume() {
 			s.mu.Unlock()
 			return
 		}
-		if result.Snapshot.State == StateWaitingExecution {
+		if result.Snapshot.State == StateWaitingExecution || result.Snapshot.State == StateWaitingApproval {
 			s.mu.Lock()
 			s.resumeStarted = false
 			s.mu.Unlock()
@@ -549,10 +567,13 @@ func (s *Session) ObserveToolResult(
 		nextState = StateWaitingExecution
 	}
 	s.snapshot.State = nextState
+	s.updateModelLoopCheckpointForStateLocked(nextState)
 	if terminal {
 		now := s.now().UTC()
 		s.snapshot.FinishedAt = &now
 		s.remainingSteps = nil
+		s.invoker = nil
+		s.modelLoop = nil
 	} else {
 		s.snapshot.FinishedAt = nil
 	}
@@ -574,6 +595,17 @@ func (s *Session) ObserveToolResult(
 	}
 	if err := s.record(eventlog.TypeAgentSessionResumed, snapshot, nil); err != nil {
 		return Result{Outcomes: []toolpipeline.Outcome{observed}, Snapshot: snapshot}, err
+	}
+	if s.hasModelLoop() {
+		if err := s.acceptObservedModelToolResult(observed); err != nil {
+			errSnapshot, stateErr := s.failModel("tool_result_projection_failed", err)
+			return Result{Outcomes: []toolpipeline.Outcome{observed}, Snapshot: errSnapshot}, errors.Join(err, stateErr)
+		}
+		next, loopErr := s.runModelLoop(ctx, ModelResult{
+			Outcomes: []toolpipeline.Outcome{observed},
+			Snapshot: s.Snapshot(),
+		})
+		return Result{Outcomes: next.Outcomes, Snapshot: next.Snapshot}, loopErr
 	}
 	return s.runSteps(
 		ctx,
@@ -652,11 +684,13 @@ func (s *Session) finishTool(
 	s.snapshot.CurrentApprovalID = approvalID
 	s.snapshot.CurrentToolStatus = toolStatus
 	s.snapshot.Revision++
+	s.updateModelLoopCheckpointForStateLocked(state)
 	if state.IsTerminal() {
 		now := s.now().UTC()
 		s.snapshot.FinishedAt = &now
 		s.remainingSteps = nil
 		s.invoker = nil
+		s.modelLoop = nil
 	} else {
 		s.snapshot.FinishedAt = nil
 	}
@@ -692,6 +726,8 @@ func (s *Session) transition(state State, callID, approvalID string, eventType e
 	s.approvalRevision = 0
 	s.invoker = nil
 	s.resumeStarted = false
+	s.modelLoop = nil
+	s.clearModelLoopCheckpointLocked()
 	snapshot := cloneSnapshot(s.snapshot)
 	s.mu.Unlock()
 	return snapshot, s.record(eventType, snapshot, nil)
@@ -719,6 +755,8 @@ func (s *Session) complete() (Snapshot, error) {
 	s.approvalRevision = 0
 	s.invoker = nil
 	s.resumeStarted = false
+	s.modelLoop = nil
+	s.clearModelLoopCheckpointLocked()
 	snapshot := cloneSnapshot(s.snapshot)
 	s.mu.Unlock()
 	return snapshot, s.record(eventlog.TypeAgentSessionCompleted, snapshot, nil)
@@ -746,6 +784,14 @@ func (s *Session) record(eventType eventlog.Type, snapshot Snapshot, extra map[s
 	})
 	if err != nil {
 		return fmt.Errorf("record %s event: %w", eventType, err)
+	}
+	s.mu.RLock()
+	persist := s.persist
+	s.mu.RUnlock()
+	if persist != nil {
+		if err := persist(); err != nil {
+			return fmt.Errorf("persist Agent Session after %s: %w", eventType, err)
+		}
 	}
 	return nil
 }
@@ -791,6 +837,7 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 		snapshot.FinishedAt = &value
 	}
 	snapshot.CurrentExecution = cloneApprovalExecution(snapshot.CurrentExecution)
+	snapshot.ModelLoopRecovery = cloneRecoverySummary(snapshot.ModelLoopRecovery)
 	return snapshot
 }
 

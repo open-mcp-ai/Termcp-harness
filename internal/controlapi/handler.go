@@ -16,6 +16,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/model"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
@@ -41,10 +42,16 @@ type handlerOptions struct {
 	core          CoreReader
 	approvals     ApprovalLister
 	decider       ApprovalDecider
+	refresher     ApprovalExecutionRefresher
+	reconciler    ApprovalReconciler
 	auth          *ApprovalAuthorizer
 	sessions      AgentSessionLister
 	sessionRunner AgentSessionRunner
+	transcripts   AgentSessionTranscriptReader
 	invoker       agentsession.Invoker
+	modelRunner   AgentModelRunner
+	modelAdapter  model.Adapter
+	modelTools    ModelToolProvider
 }
 
 type Option func(*handlerOptions)
@@ -100,6 +107,26 @@ func WithApprovalDecider(decider ApprovalDecider) Option {
 	}
 }
 
+type ApprovalExecutionRefresher interface {
+	RefreshExecution(context.Context, string) (approval.ExecutionRefresh, error)
+}
+
+func WithApprovalExecutionRefresher(refresher ApprovalExecutionRefresher) Option {
+	return func(options *handlerOptions) {
+		options.refresher = refresher
+	}
+}
+
+type ApprovalReconciler interface {
+	ReconcileUnknown(context.Context, string) (approval.Reconciliation, error)
+}
+
+func WithApprovalReconciler(reconciler ApprovalReconciler) Option {
+	return func(options *handlerOptions) {
+		options.reconciler = reconciler
+	}
+}
+
 func WithApprovalAuthorizer(authorizer *ApprovalAuthorizer) Option {
 	return func(options *handlerOptions) {
 		options.auth = authorizer
@@ -116,6 +143,16 @@ func WithAgentSessions(lister AgentSessionLister) Option {
 	}
 }
 
+type AgentSessionTranscriptReader interface {
+	Transcript(string) (agentsession.Transcript, error)
+}
+
+func WithAgentSessionTranscripts(reader AgentSessionTranscriptReader) Option {
+	return func(options *handlerOptions) {
+		options.transcripts = reader
+	}
+}
+
 type AgentSessionRunner interface {
 	AgentSessionLister
 	Create(string, string) (*agentsession.Session, error)
@@ -128,6 +165,41 @@ func WithAgentSessionRunner(runner AgentSessionRunner, invoker agentsession.Invo
 		options.sessionRunner = runner
 		options.sessions = runner
 		options.invoker = invoker
+	}
+}
+
+type AgentModelRunner interface {
+	RunModel(
+		context.Context,
+		string,
+		model.Adapter,
+		agentsession.Invoker,
+		[]agentsession.ModelTool,
+		string,
+		agentsession.ModelRunOptions,
+	) (agentsession.ModelResult, error)
+	ResumeModel(
+		context.Context,
+		string,
+		model.Adapter,
+		agentsession.Invoker,
+		[]agentsession.ModelTool,
+	) (agentsession.ModelResult, error)
+}
+
+type ModelToolProvider interface {
+	ModelTools() []agentsession.ModelTool
+}
+
+func WithAgentModelLoop(
+	runner AgentModelRunner,
+	adapter model.Adapter,
+	tools ModelToolProvider,
+) Option {
+	return func(options *handlerOptions) {
+		options.modelRunner = runner
+		options.modelAdapter = adapter
+		options.modelTools = tools
 	}
 }
 
@@ -172,6 +244,20 @@ type approvalDecisionResponse struct {
 	Warning  string            `json:"warning,omitempty"`
 }
 
+type approvalRefreshResponse struct {
+	Approval approval.Tracked `json:"approval"`
+	Changed  bool             `json:"changed"`
+	Complete bool             `json:"complete"`
+	Warning  string           `json:"warning,omitempty"`
+}
+
+type approvalReconcileResponse struct {
+	Approval approval.Tracked `json:"approval"`
+	Changed  bool             `json:"changed"`
+	Resolved bool             `json:"resolved"`
+	Warning  string           `json:"warning,omitempty"`
+}
+
 type agentSessionCreateRequest struct {
 	ID            string `json:"id"`
 	CoreSessionID string `json:"core_session_id,omitempty"`
@@ -190,6 +276,22 @@ type agentCallSummary struct {
 
 type agentSessionRunResponse struct {
 	Session agentsession.Snapshot `json:"session"`
+	Calls   []agentCallSummary    `json:"calls"`
+}
+
+type agentSessionTranscriptResponse struct {
+	Transcript agentsession.Transcript `json:"transcript"`
+}
+
+type agentLoopRequest struct {
+	Input         string `json:"input"`
+	MaxIterations int    `json:"max_iterations,omitempty"`
+	MaxToolCalls  int    `json:"max_tool_calls,omitempty"`
+}
+
+type agentLoopResponse struct {
+	Session agentsession.Snapshot `json:"session"`
+	Output  string                `json:"output,omitempty"`
 	Calls   []agentCallSummary    `json:"calls"`
 }
 
@@ -296,10 +398,16 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 			errors.Is(err, approval.ErrDecisionMismatch):
 			writeJSON(w, http.StatusConflict, errorResponse{Error: "approval decision conflict"})
 		case snapshot.Status == approval.StatusUnknown:
-			writeJSON(w, http.StatusAccepted, approvalDecisionResponse{Approval: snapshot, Outcome: "unknown"})
+			response := approvalDecisionResponse{Approval: snapshot, Outcome: "unknown"}
+			if errors.Is(err, approval.ErrApprovalPersistence) {
+				response.Warning = "approval outcome is unknown and local approval history persistence failed"
+			}
+			writeJSON(w, http.StatusAccepted, response)
 		case snapshot.Status.IsTerminal():
 			response := approvalDecisionResponse{Approval: snapshot, Outcome: "confirmed"}
-			if err != nil {
+			if errors.Is(err, approval.ErrApprovalPersistence) {
+				response.Warning = "approval state was confirmed but local approval history persistence failed"
+			} else if err != nil {
 				response.Warning = "approval state was confirmed but event recording failed"
 			}
 			writeJSON(w, http.StatusOK, response)
@@ -307,6 +415,94 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 			writeJSON(w, http.StatusOK, approvalDecisionResponse{Approval: snapshot, Outcome: "confirmed"})
 		default:
 			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "approval decision failed"})
+		}
+	})
+	mux.HandleFunc("POST /v1/approvals/{id}/execution/refresh", func(w http.ResponseWriter, request *http.Request) {
+		if config.refresher == nil || config.auth == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "approval execution refresh is disabled"})
+			return
+		}
+		if !authorizeMutation(w, request, config.auth) || !requireJSONContentType(w, request) {
+			return
+		}
+		var body struct{}
+		if !decodeJSONBody(w, request, 64<<10, &body) {
+			return
+		}
+
+		refreshContext, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+		defer cancel()
+		refresh, err := config.refresher.RefreshExecution(
+			refreshContext,
+			strings.TrimSpace(request.PathValue("id")),
+		)
+		switch {
+		case errors.Is(err, approval.ErrApprovalNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "approval request not found"})
+		case errors.Is(err, approval.ErrApprovalNotApproved):
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "approval request is not approved"})
+		case errors.Is(err, approval.ErrApprovalLookupUnavailable):
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "approval execution lookup is unavailable"})
+		case err != nil && refresh.Changed:
+			writeJSON(w, http.StatusOK, approvalRefreshResponse{
+				Approval: refresh.Approval,
+				Changed:  refresh.Changed,
+				Complete: refresh.Complete,
+				Warning:  "execution state was refreshed but local history recording failed",
+			})
+		case err != nil:
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "approval execution refresh failed"})
+		default:
+			writeJSON(w, http.StatusOK, approvalRefreshResponse{
+				Approval: refresh.Approval,
+				Changed:  refresh.Changed,
+				Complete: refresh.Complete,
+			})
+		}
+	})
+	mux.HandleFunc("POST /v1/approvals/{id}/reconcile", func(w http.ResponseWriter, request *http.Request) {
+		if config.reconciler == nil || config.auth == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "approval reconciliation is disabled"})
+			return
+		}
+		if !authorizeMutation(w, request, config.auth) || !requireJSONContentType(w, request) {
+			return
+		}
+		var body struct{}
+		if !decodeJSONBody(w, request, 64<<10, &body) {
+			return
+		}
+
+		reconcileContext, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+		defer cancel()
+		reconciliation, err := config.reconciler.ReconcileUnknown(
+			reconcileContext,
+			strings.TrimSpace(request.PathValue("id")),
+		)
+		switch {
+		case errors.Is(err, approval.ErrApprovalNotFound):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "approval request not found"})
+		case errors.Is(err, approval.ErrApprovalNotUnknown):
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "approval request is not unknown"})
+		case errors.Is(err, approval.ErrApprovalLookupUnavailable):
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "approval lookup is unavailable"})
+		case errors.Is(err, approval.ErrDecisionMismatch):
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "approval reconciliation conflict"})
+		case err != nil && (reconciliation.Resolved || errors.Is(err, approval.ErrApprovalPersistence)):
+			writeJSON(w, http.StatusOK, approvalReconcileResponse{
+				Approval: reconciliation.Approval,
+				Changed:  reconciliation.Changed,
+				Resolved: reconciliation.Resolved,
+				Warning:  "approval reconciliation completed but local recording failed",
+			})
+		case err != nil:
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "approval reconciliation failed"})
+		default:
+			writeJSON(w, http.StatusOK, approvalReconcileResponse{
+				Approval: reconciliation.Approval,
+				Changed:  reconciliation.Changed,
+				Resolved: reconciliation.Resolved,
+			})
 		}
 	})
 	mux.HandleFunc("GET /v1/agent/sessions", func(w http.ResponseWriter, _ *http.Request) {
@@ -334,6 +530,25 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"session": session.Snapshot()})
+	})
+	mux.HandleFunc("GET /v1/agent/sessions/{id}/transcript", func(w http.ResponseWriter, request *http.Request) {
+		if config.transcripts == nil || config.auth == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "Agent Session transcript is disabled"})
+			return
+		}
+		if !authorizeMutation(w, request, config.auth) {
+			return
+		}
+		transcript, err := config.transcripts.Transcript(strings.TrimSpace(request.PathValue("id")))
+		if err != nil {
+			if errors.Is(err, agentsession.ErrSessionNotFound) {
+				writeJSON(w, http.StatusNotFound, errorResponse{Error: "Agent Session not found"})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "Agent Session transcript query failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, agentSessionTranscriptResponse{Transcript: transcript})
 	})
 	mux.HandleFunc("POST /v1/agent/sessions", func(w http.ResponseWriter, request *http.Request) {
 		if config.sessionRunner == nil || config.auth == nil {
@@ -395,29 +610,148 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 			return
 		}
 
-		calls := make([]agentCallSummary, 0, len(result.Outcomes))
-		for _, outcome := range result.Outcomes {
-			resultBytes := 0
-			isError := false
-			if outcome.Result != nil {
-				if encoded, encodeErr := json.Marshal(outcome.Result); encodeErr == nil {
-					resultBytes = len(encoded)
-				}
-				isError = outcome.Result.IsError
-			}
-			calls = append(calls, agentCallSummary{
-				CallID:      outcome.Call.ID,
-				Status:      outcome.Call.Status,
-				ResultBytes: resultBytes,
-				IsError:     isError,
-			})
-		}
+		calls := summarizeAgentCalls(result.Outcomes)
 		status := http.StatusOK
 		if result.Snapshot.State == agentsession.StateWaitingApproval ||
 			result.Snapshot.State == agentsession.StateWaitingExecution {
 			status = http.StatusAccepted
 		}
 		writeJSON(w, status, agentSessionRunResponse{Session: result.Snapshot, Calls: calls})
+	})
+	mux.HandleFunc("POST /v1/agent/sessions/{id}/loop", func(w http.ResponseWriter, request *http.Request) {
+		if config.modelRunner == nil || config.modelAdapter == nil || config.modelTools == nil ||
+			config.invoker == nil || config.auth == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "model Agent Loop is disabled"})
+			return
+		}
+		if !authorizeMutation(w, request, config.auth) || !requireJSONContentType(w, request) {
+			return
+		}
+		var body agentLoopRequest
+		if !decodeJSONBody(w, request, 256<<10, &body) {
+			return
+		}
+		body.Input = strings.TrimSpace(body.Input)
+		if body.Input == "" {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "input is required"})
+			return
+		}
+		tools := config.modelTools.ModelTools()
+		if len(tools) == 0 {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "model tools are not available"})
+			return
+		}
+
+		loopContext, cancel := context.WithTimeout(request.Context(), 5*time.Minute)
+		defer cancel()
+		result, err := config.modelRunner.RunModel(
+			loopContext,
+			strings.TrimSpace(request.PathValue("id")),
+			config.modelAdapter,
+			config.invoker,
+			tools,
+			body.Input,
+			agentsession.ModelRunOptions{
+				MaxIterations: body.MaxIterations,
+				MaxToolCalls:  body.MaxToolCalls,
+			},
+		)
+		if result.Snapshot.ID == "" {
+			status := http.StatusBadGateway
+			if errors.Is(err, agentsession.ErrSessionNotFound) {
+				status = http.StatusNotFound
+			} else if errors.Is(err, agentsession.ErrModelRequired) ||
+				errors.Is(err, agentsession.ErrModelTools) ||
+				errors.Is(err, agentsession.ErrModelInput) ||
+				errors.Is(err, agentsession.ErrInvokerRequired) {
+				status = http.StatusBadRequest
+			}
+			writeJSON(w, status, errorResponse{Error: "model Agent Loop failed"})
+			return
+		}
+
+		status := http.StatusOK
+		if result.Snapshot.State == agentsession.StateWaitingApproval ||
+			result.Snapshot.State == agentsession.StateWaitingExecution {
+			status = http.StatusAccepted
+		}
+		response := agentLoopResponse{
+			Session: result.Snapshot,
+			Output:  result.Output,
+			Calls:   summarizeAgentCalls(result.Outcomes),
+		}
+		if err != nil && result.Snapshot.State == agentsession.StateRunning {
+			status = http.StatusBadGateway
+		}
+		writeJSON(w, status, response)
+	})
+	mux.HandleFunc("POST /v1/agent/sessions/{id}/loop/resume", func(w http.ResponseWriter, request *http.Request) {
+		if config.modelRunner == nil || config.modelAdapter == nil || config.modelTools == nil ||
+			config.invoker == nil || config.auth == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "model Agent Loop recovery is disabled"})
+			return
+		}
+		if !authorizeMutation(w, request, config.auth) || !requireJSONContentType(w, request) {
+			return
+		}
+		var body struct{}
+		if !decodeJSONBody(w, request, 64<<10, &body) {
+			return
+		}
+		tools := config.modelTools.ModelTools()
+		if len(tools) == 0 {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "model tools are not available"})
+			return
+		}
+
+		resumeContext, cancel := context.WithTimeout(request.Context(), 5*time.Minute)
+		defer cancel()
+		result, err := config.modelRunner.ResumeModel(
+			resumeContext,
+			strings.TrimSpace(request.PathValue("id")),
+			config.modelAdapter,
+			config.invoker,
+			tools,
+		)
+		if result.Snapshot.ID == "" {
+			status := http.StatusBadGateway
+			switch {
+			case errors.Is(err, agentsession.ErrSessionNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, agentsession.ErrModelRecoveryUnavailable),
+				errors.Is(err, agentsession.ErrModelRecoveryBlocked),
+				errors.Is(err, agentsession.ErrModelRecoveryMismatch):
+				status = http.StatusConflict
+			case errors.Is(err, agentsession.ErrModelRequired),
+				errors.Is(err, agentsession.ErrModelTools),
+				errors.Is(err, agentsession.ErrInvokerRequired):
+				status = http.StatusBadRequest
+			}
+			writeJSON(w, status, errorResponse{Error: "model Agent Loop recovery failed"})
+			return
+		}
+
+		status := http.StatusOK
+		if result.Snapshot.State == agentsession.StateWaitingApproval ||
+			result.Snapshot.State == agentsession.StateWaitingExecution {
+			status = http.StatusAccepted
+		}
+		response := agentLoopResponse{
+			Session: result.Snapshot,
+			Output:  result.Output,
+			Calls:   summarizeAgentCalls(result.Outcomes),
+		}
+		if err != nil && result.Snapshot.State == agentsession.StateRunning {
+			status = http.StatusBadGateway
+		}
+		if errors.Is(err, agentsession.ErrModelRecoveryBlocked) ||
+			errors.Is(err, agentsession.ErrModelRecoveryMismatch) ||
+			errors.Is(err, agentsession.ErrModelRecoveryUnavailable) {
+			status = http.StatusConflict
+			writeJSON(w, status, errorResponse{Error: "model Agent Loop recovery failed"})
+			return
+		}
+		writeJSON(w, status, response)
 	})
 	mux.HandleFunc("GET /v1/events", func(w http.ResponseWriter, request *http.Request) {
 		if config.events == nil {
@@ -442,6 +776,7 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, window)
 	})
+	mux.HandleFunc("GET /v1/events/stream", eventStreamHandler(config.events))
 	mux.HandleFunc("GET /v1/mcp/servers", func(w http.ResponseWriter, _ *http.Request) {
 		response := mcpServersResponse{Servers: []mcpcontrol.Snapshot{}, ControlPlaneOn: config.mcp != nil}
 		if config.mcp != nil {
@@ -463,6 +798,27 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 	})
 
 	return mux
+}
+
+func summarizeAgentCalls(outcomes []toolpipeline.Outcome) []agentCallSummary {
+	calls := make([]agentCallSummary, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		resultBytes := 0
+		isError := false
+		if outcome.Result != nil {
+			if encoded, encodeErr := json.Marshal(outcome.Result); encodeErr == nil {
+				resultBytes = len(encoded)
+			}
+			isError = outcome.Result.IsError
+		}
+		calls = append(calls, agentCallSummary{
+			CallID:      outcome.Call.ID,
+			Status:      outcome.Call.Status,
+			ResultBytes: resultBytes,
+			IsError:     isError,
+		})
+	}
+	return calls
 }
 
 func resolveApprovalCorrelationCapability(

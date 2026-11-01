@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
+	"github.com/open-mcp-ai/termcp-harness/internal/model"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
@@ -22,19 +23,15 @@ var (
 )
 
 type Manager struct {
-	mu      sync.RWMutex
-	byID    map[string]*Session
-	journal *eventlog.Journal
+	mu          sync.RWMutex
+	persistMu   sync.Mutex
+	byID        map[string]*Session
+	journal     *eventlog.Journal
+	persistence Persistence
 }
 
 func NewManager(journal *eventlog.Journal) (*Manager, error) {
-	if journal == nil {
-		return nil, errors.New("event log is required for Agent Session manager")
-	}
-	return &Manager{
-		byID:    make(map[string]*Session),
-		journal: journal,
-	}, nil
+	return NewManagerWithPersistence(journal, nil)
 }
 
 func (m *Manager) Create(id, coreSessionID string) (*Session, error) {
@@ -47,11 +44,19 @@ func (m *Manager) Create(id, coreSessionID string) (*Session, error) {
 	}
 	id = session.Snapshot().ID
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if _, exists := m.byID[id]; exists {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("%w: %q", ErrSessionExists, id)
 	}
 	m.byID[id] = session
+	m.mu.Unlock()
+	session.setPersistence(m.persist)
+	if err := m.persist(); err != nil {
+		m.mu.Lock()
+		delete(m.byID, id)
+		m.mu.Unlock()
+		return nil, err
+	}
 	return session, nil
 }
 
@@ -92,6 +97,14 @@ func (m *Manager) List() []Snapshot {
 	return result
 }
 
+func (m *Manager) Transcript(id string) (Transcript, error) {
+	session, err := m.Get(id)
+	if err != nil {
+		return Transcript{}, err
+	}
+	return session.Transcript(), nil
+}
+
 func (m *Manager) Run(
 	ctx context.Context,
 	id string,
@@ -103,6 +116,22 @@ func (m *Manager) Run(
 		return Result{}, err
 	}
 	return session.Run(ctx, invoker, steps)
+}
+
+func (m *Manager) RunModel(
+	ctx context.Context,
+	id string,
+	adapter model.Adapter,
+	invoker Invoker,
+	tools []ModelTool,
+	input string,
+	options ModelRunOptions,
+) (ModelResult, error) {
+	session, err := m.Get(id)
+	if err != nil {
+		return ModelResult{}, err
+	}
+	return session.RunModel(ctx, adapter, invoker, tools, input, options)
 }
 
 func (m *Manager) ObserveApproval(callID string, observed approval.Snapshot) error {

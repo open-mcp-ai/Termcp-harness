@@ -24,11 +24,12 @@ import (
 )
 
 const (
-	defaultTimeout    = 5 * time.Second
-	decisionTimeout   = 20 * time.Second
-	maxResponseBytes  = 4 << 20
-	defaultEventLimit = 200
-	maxEventLimit     = 1000
+	defaultTimeout     = 5 * time.Second
+	decisionTimeout    = 20 * time.Second
+	maxResponseBytes   = 4 << 20
+	maxTranscriptBytes = 16 << 20
+	defaultEventLimit  = 200
+	maxEventLimit      = 1000
 )
 
 var ErrApprovalTokenRequired = errors.New("approval token is required")
@@ -71,8 +72,26 @@ type ApprovalDecisionResult struct {
 	Warning  string            `json:"warning,omitempty"`
 }
 
+type ApprovalRefreshResult struct {
+	Approval approval.Tracked `json:"approval"`
+	Changed  bool             `json:"changed"`
+	Complete bool             `json:"complete"`
+	Warning  string           `json:"warning,omitempty"`
+}
+
+type ApprovalReconciliationResult struct {
+	Approval approval.Tracked `json:"approval"`
+	Changed  bool             `json:"changed"`
+	Resolved bool             `json:"resolved"`
+	Warning  string           `json:"warning,omitempty"`
+}
+
 type AgentSessionEnvelope struct {
 	Session agentsession.Snapshot `json:"session"`
+}
+
+type AgentSessionTranscriptEnvelope struct {
+	Transcript agentsession.Transcript `json:"transcript"`
 }
 
 type AgentCallSummary struct {
@@ -84,6 +103,12 @@ type AgentCallSummary struct {
 
 type AgentSessionRunResult struct {
 	Session agentsession.Snapshot `json:"session"`
+	Calls   []AgentCallSummary    `json:"calls"`
+}
+
+type AgentLoopResult struct {
+	Session agentsession.Snapshot `json:"session"`
+	Output  string                `json:"output,omitempty"`
 	Calls   []AgentCallSummary    `json:"calls"`
 }
 
@@ -99,10 +124,11 @@ type Bootstrap struct {
 }
 
 type Client struct {
-	endpoint     string
-	http         *http.Client
-	decisionHTTP *http.Client
-	agentHTTP    *http.Client
+	endpoint       string
+	http           *http.Client
+	decisionHTTP   *http.Client
+	agentHTTP      *http.Client
+	transcriptHTTP *http.Client
 }
 
 func New(endpoint string) (*Client, error) {
@@ -111,10 +137,11 @@ func New(endpoint string) (*Client, error) {
 		return nil, err
 	}
 	return &Client{
-		endpoint:     normalized,
-		http:         &http.Client{Timeout: defaultTimeout},
-		decisionHTTP: &http.Client{Timeout: decisionTimeout},
-		agentHTTP:    &http.Client{Timeout: 130 * time.Second},
+		endpoint:       normalized,
+		http:           &http.Client{Timeout: defaultTimeout},
+		decisionHTTP:   &http.Client{Timeout: decisionTimeout},
+		agentHTTP:      &http.Client{Timeout: 5 * time.Minute},
+		transcriptHTTP: &http.Client{Timeout: 20 * time.Second},
 	}, nil
 }
 
@@ -166,6 +193,85 @@ func (c *Client) Events(ctx context.Context, after eventlog.Sequence, limit int)
 		return eventlog.Window{}, err
 	}
 	return window, nil
+}
+
+func (c *Client) Core(ctx context.Context) (CoreState, error) {
+	if c == nil {
+		return CoreState{}, errors.New("control client is required")
+	}
+	var state CoreState
+	if _, err := c.getJSON(ctx, "/v1/core", []int{http.StatusOK}, &state); err != nil {
+		return CoreState{}, err
+	}
+	return state, nil
+}
+
+func (c *Client) AgentSession(ctx context.Context, id string) (AgentSessionEnvelope, error) {
+	if c == nil {
+		return AgentSessionEnvelope{}, errors.New("control client is required")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 256 {
+		return AgentSessionEnvelope{}, errors.New("Agent Session ID is required")
+	}
+	var result AgentSessionEnvelope
+	if _, err := c.getJSON(
+		ctx,
+		"/v1/agent/sessions/"+url.PathEscape(id),
+		[]int{http.StatusOK},
+		&result,
+	); err != nil {
+		return AgentSessionEnvelope{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) AgentSessionTranscript(
+	ctx context.Context,
+	id string,
+	token string,
+) (AgentSessionTranscriptEnvelope, error) {
+	if c == nil {
+		return AgentSessionTranscriptEnvelope{}, errors.New("control client is required")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 256 {
+		return AgentSessionTranscriptEnvelope{}, errors.New("Agent Session ID is required")
+	}
+	if token == "" || strings.TrimSpace(token) != token {
+		return AgentSessionTranscriptEnvelope{}, ErrApprovalTokenRequired
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		c.endpoint+"/v1/agent/sessions/"+url.PathEscape(id)+"/transcript",
+		nil,
+	)
+	if err != nil {
+		return AgentSessionTranscriptEnvelope{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := c.transcriptHTTP.Do(request)
+	if err != nil {
+		return AgentSessionTranscriptEnvelope{}, err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxTranscriptBytes+1))
+	if err != nil {
+		return AgentSessionTranscriptEnvelope{}, err
+	}
+	if len(responseBody) > maxTranscriptBytes {
+		return AgentSessionTranscriptEnvelope{}, fmt.Errorf("transcript response exceeds %d bytes", maxTranscriptBytes)
+	}
+	if response.StatusCode != http.StatusOK {
+		return AgentSessionTranscriptEnvelope{}, fmt.Errorf("Agent Session transcript returned HTTP %d", response.StatusCode)
+	}
+	var result AgentSessionTranscriptEnvelope
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return AgentSessionTranscriptEnvelope{}, fmt.Errorf("decode Agent Session transcript: %w", err)
+	}
+	return result, nil
 }
 
 func (c *Client) DecideApproval(
@@ -230,6 +336,108 @@ func (c *Client) DecideApproval(
 	return result, nil
 }
 
+// RefreshApprovalExecution asks the Runtime to read the authority's execution
+// state once. It never submits a decision or replays the approved tool call.
+func (c *Client) RefreshApprovalExecution(
+	ctx context.Context,
+	id string,
+	token string,
+) (ApprovalRefreshResult, error) {
+	if c == nil {
+		return ApprovalRefreshResult{}, errors.New("control client is required")
+	}
+	if _, err := approval.TrustedReference(id, "", nil); err != nil {
+		return ApprovalRefreshResult{}, err
+	}
+	if token == "" || strings.TrimSpace(token) != token {
+		return ApprovalRefreshResult{}, ErrApprovalTokenRequired
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.endpoint+"/v1/approvals/"+url.PathEscape(id)+"/execution/refresh",
+		bytes.NewReader([]byte(`{}`)),
+	)
+	if err != nil {
+		return ApprovalRefreshResult{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	response, err := c.decisionHTTP.Do(request)
+	if err != nil {
+		return ApprovalRefreshResult{}, err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil {
+		return ApprovalRefreshResult{}, err
+	}
+	if len(responseBody) > maxResponseBytes {
+		return ApprovalRefreshResult{}, fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
+	}
+	if response.StatusCode != http.StatusOK {
+		return ApprovalRefreshResult{}, fmt.Errorf("approval execution refresh returned HTTP %d", response.StatusCode)
+	}
+	var result ApprovalRefreshResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return ApprovalRefreshResult{}, fmt.Errorf("decode approval execution refresh response: %w", err)
+	}
+	return result, nil
+}
+
+// ReconcileApproval asks the Runtime to perform one read-only authority lookup
+// for an unknown approval. It cannot submit a decision or replay a tool call.
+func (c *Client) ReconcileApproval(
+	ctx context.Context,
+	id string,
+	token string,
+) (ApprovalReconciliationResult, error) {
+	if c == nil {
+		return ApprovalReconciliationResult{}, errors.New("control client is required")
+	}
+	if _, err := approval.TrustedReference(id, "", nil); err != nil {
+		return ApprovalReconciliationResult{}, err
+	}
+	if token == "" || strings.TrimSpace(token) != token {
+		return ApprovalReconciliationResult{}, ErrApprovalTokenRequired
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.endpoint+"/v1/approvals/"+url.PathEscape(id)+"/reconcile",
+		bytes.NewReader([]byte(`{}`)),
+	)
+	if err != nil {
+		return ApprovalReconciliationResult{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+
+	response, err := c.decisionHTTP.Do(request)
+	if err != nil {
+		return ApprovalReconciliationResult{}, err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil {
+		return ApprovalReconciliationResult{}, err
+	}
+	if len(responseBody) > maxResponseBytes {
+		return ApprovalReconciliationResult{}, fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
+	}
+	if response.StatusCode != http.StatusOK {
+		return ApprovalReconciliationResult{}, fmt.Errorf("approval reconciliation returned HTTP %d", response.StatusCode)
+	}
+	var result ApprovalReconciliationResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return ApprovalReconciliationResult{}, fmt.Errorf("decode approval reconciliation response: %w", err)
+	}
+	return result, nil
+}
+
 func (c *Client) CreateAgentSession(
 	ctx context.Context,
 	id string,
@@ -289,6 +497,74 @@ func (c *Client) RunAgentSession(
 		&result,
 	); err != nil {
 		return AgentSessionRunResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) RunAgentLoop(
+	ctx context.Context,
+	id string,
+	input string,
+	maxIterations int,
+	maxToolCalls int,
+	token string,
+) (AgentLoopResult, error) {
+	if c == nil {
+		return AgentLoopResult{}, errors.New("control client is required")
+	}
+	if err := validateMutationToken(token); err != nil {
+		return AgentLoopResult{}, err
+	}
+	body, err := json.Marshal(map[string]any{
+		"input":          input,
+		"max_iterations": maxIterations,
+		"max_tool_calls": maxToolCalls,
+	})
+	if err != nil {
+		return AgentLoopResult{}, err
+	}
+	var result AgentLoopResult
+	if _, err := c.postAgentJSON(
+		ctx,
+		"/v1/agent/sessions/"+url.PathEscape(id)+"/loop",
+		body,
+		token,
+		[]int{http.StatusOK, http.StatusAccepted},
+		&result,
+	); err != nil {
+		return AgentLoopResult{}, err
+	}
+	return result, nil
+}
+
+// ResumeAgentLoop asks the Runtime to claim one safe, Runtime-restarted model
+// checkpoint. Model endpoint, credentials, tools, and invoker remain Runtime
+// configuration and are never supplied by the client.
+func (c *Client) ResumeAgentLoop(
+	ctx context.Context,
+	id string,
+	token string,
+) (AgentLoopResult, error) {
+	if c == nil {
+		return AgentLoopResult{}, errors.New("control client is required")
+	}
+	if err := validateMutationToken(token); err != nil {
+		return AgentLoopResult{}, err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 256 {
+		return AgentLoopResult{}, errors.New("Agent Session ID is required")
+	}
+	var result AgentLoopResult
+	if _, err := c.postAgentJSON(
+		ctx,
+		"/v1/agent/sessions/"+url.PathEscape(id)+"/loop/resume",
+		[]byte(`{}`),
+		token,
+		[]int{http.StatusOK, http.StatusAccepted},
+		&result,
+	); err != nil {
+		return AgentLoopResult{}, err
 	}
 	return result, nil
 }

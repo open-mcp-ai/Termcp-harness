@@ -15,12 +15,20 @@ import (
 const defaultMaxArgumentsBytes = 1 << 20
 
 type Rule struct {
-	ServerID  string          `json:"server_id"`
-	ToolName  string          `json:"tool_name"`
-	Effect    toolcall.Effect `json:"effect"`
-	Arguments json.RawMessage `json:"arguments"`
-	Reason    string          `json:"reason,omitempty"`
+	ServerID    string          `json:"server_id"`
+	ToolName    string          `json:"tool_name"`
+	Effect      toolcall.Effect `json:"effect"`
+	Arguments   json.RawMessage `json:"arguments"`
+	ModelResult ModelResultMode `json:"model_result,omitempty"`
+	Reason      string          `json:"reason,omitempty"`
 }
+
+type ModelResultMode string
+
+const (
+	ModelResultNone    ModelResultMode = "none"
+	ModelResultContent ModelResultMode = "content"
+)
 
 type AllowlistPolicy struct {
 	rules []Rule
@@ -41,6 +49,12 @@ func NewAllowlistPolicy(rules ...Rule) (*AllowlistPolicy, error) {
 		}
 		if !validEffect(rule.Effect) || rule.Effect == toolcall.EffectUnspecified {
 			return nil, fmt.Errorf("allowlist rule %d requires an explicit valid effect", i)
+		}
+		if rule.ModelResult == "" {
+			rule.ModelResult = ModelResultNone
+		}
+		if rule.ModelResult != ModelResultNone && rule.ModelResult != ModelResultContent {
+			return nil, fmt.Errorf("allowlist rule %d has invalid model_result %q", i, rule.ModelResult)
 		}
 		arguments, err := normalizeArguments(rule.Arguments, defaultMaxArgumentsBytes)
 		if err != nil {
@@ -83,6 +97,21 @@ func (p *AllowlistPolicy) Decide(ctx context.Context, request Request) (PolicyDe
 		Effect: toolcall.EffectUnspecified,
 		Reason: "no explicit allowlist rule matched the server, tool, and exact arguments",
 	}, nil
+}
+
+// Rules returns a defensive copy of the compiled allowlist. Callers may use it
+// to expose only explicitly configured tools to a model, but the copy is not a
+// security bypass: Dispatch still evaluates the compiled policy.
+func (p *AllowlistPolicy) Rules() []Rule {
+	if p == nil {
+		return nil
+	}
+	rules := make([]Rule, len(p.rules))
+	for i, rule := range p.rules {
+		rules[i] = rule
+		rules[i].Arguments = append(json.RawMessage(nil), rule.Arguments...)
+	}
+	return rules
 }
 
 func normalizeArguments(raw json.RawMessage, maxBytes int) (json.RawMessage, error) {

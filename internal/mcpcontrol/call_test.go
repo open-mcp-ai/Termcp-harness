@@ -13,7 +13,7 @@ import (
 
 func TestHostCallToolRequiresReadyServerAndKnownTool(t *testing.T) {
 	client := newFakeHostClient()
-	host := NewHost(withHostClientFactory(func(string, string) (clientConnection, error) { return client, nil }))
+	host := NewHost(withHostClientFactory(func(clientConfig) (clientConnection, error) { return client, nil }))
 	registerTestServer(t, host)
 
 	request := mcp.CallToolRequest{Params: mcp.CallToolParams{
@@ -101,7 +101,7 @@ func TestHostCallToolTimeoutPreservesDeadlineError(t *testing.T) {
 
 func newReadyCallHost(t *testing.T, client *fakeHostClient) *Host {
 	t.Helper()
-	host := NewHost(withHostClientFactory(func(string, string) (clientConnection, error) { return client, nil }))
+	host := NewHost(withHostClientFactory(func(clientConfig) (clientConnection, error) { return client, nil }))
 	registerTestServer(t, host)
 	if err := host.Connect(context.Background(), "termcp-core"); err != nil {
 		t.Fatalf("Connect() error = %v", err)

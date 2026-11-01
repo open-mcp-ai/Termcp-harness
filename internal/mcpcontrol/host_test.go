@@ -2,10 +2,13 @@ package mcpcontrol
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
@@ -16,7 +19,7 @@ func TestHostLifecycleAndCapabilityNotification(t *testing.T) {
 	client := newFakeHostClient()
 	host := NewHost(
 		WithHostEventLog(journal),
-		withHostClientFactory(func(string, string) (clientConnection, error) { return client, nil }),
+		withHostClientFactory(func(clientConfig) (clientConnection, error) { return client, nil }),
 	)
 	registerTestServer(t, host)
 
@@ -115,7 +118,7 @@ func TestHostMarksConnectionFailureUnavailable(t *testing.T) {
 	client.startErr = context.DeadlineExceeded
 	host := NewHost(
 		WithHostEventLog(journal),
-		withHostClientFactory(func(string, string) (clientConnection, error) { return client, nil }),
+		withHostClientFactory(func(clientConfig) (clientConnection, error) { return client, nil }),
 	)
 	registerTestServer(t, host)
 
@@ -131,10 +134,41 @@ func TestHostMarksConnectionFailureUnavailable(t *testing.T) {
 	}
 }
 
+func TestHostPassesAuthTokenOnlyToClientFactory(t *testing.T) {
+	client := newFakeHostClient()
+	received := make(chan string, 1)
+	host := NewHost(withHostClientFactory(func(config clientConfig) (clientConnection, error) {
+		received <- config.AuthToken
+		return client, nil
+	}))
+	if _, err := host.Register(Spec{
+		ID:        "termcp-core",
+		Name:      "Termcp Core",
+		Endpoint:  "http://127.0.0.1:18765/stream",
+		AuthToken: "credential-reference-value",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Connect(context.Background(), "termcp-core"); err != nil {
+		t.Fatal(err)
+	}
+	if token := <-received; token != "credential-reference-value" {
+		t.Fatalf("factory token = %q", token)
+	}
+	snapshot := mustSnapshot(t, host, "termcp-core")
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "credential-reference-value") {
+		t.Fatal("MCP token leaked into snapshot")
+	}
+}
+
 func TestHostSerializesConcurrentConnect(t *testing.T) {
 	client := newFakeHostClient()
 	var factoryCalls atomic.Int32
-	host := NewHost(withHostClientFactory(func(string, string) (clientConnection, error) {
+	host := NewHost(withHostClientFactory(func(clientConfig) (clientConnection, error) {
 		factoryCalls.Add(1)
 		return client, nil
 	}))
@@ -159,6 +193,46 @@ func TestHostSerializesConcurrentConnect(t *testing.T) {
 	}
 	if got := factoryCalls.Load(); got != 1 {
 		t.Fatalf("factory calls = %d, want 1", got)
+	}
+}
+
+func TestHostKeepsDuplicateToolNamesScopedByServerID(t *testing.T) {
+	clientA := newFakeHostClient()
+	clientB := newFakeHostClient()
+	host := NewHost(withHostClientFactory(func(config clientConfig) (clientConnection, error) {
+		if config.Endpoint == "http://127.0.0.1:18888/stream" {
+			return clientA, nil
+		}
+		return clientB, nil
+	}))
+	for _, spec := range []Spec{
+		{ID: "server-a", Name: "Server A", Endpoint: "http://127.0.0.1:18888/stream"},
+		{ID: "server-b", Name: "Server B", Endpoint: "http://127.0.0.1:18889/stream"},
+	} {
+		if _, err := host.Register(spec); err != nil {
+			t.Fatal(err)
+		}
+		if err := host.Connect(context.Background(), spec.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := host.LoadCapabilities(context.Background(), spec.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := host.Enable(spec.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if snapshot := mustSnapshot(t, host, "server-a"); !snapshot.Ready {
+		t.Fatalf("server-a = %+v", snapshot)
+	}
+	if snapshot := mustSnapshot(t, host, "server-b"); !snapshot.Ready {
+		t.Fatalf("server-b = %+v", snapshot)
+	}
+	if tools := host.Tools("server-a"); len(tools) != 1 || tools[0].Name != "term" {
+		t.Fatalf("server-a tools = %+v", tools)
+	}
+	if tools := host.Tools("server-b"); len(tools) != 1 || tools[0].Name != "term" {
+		t.Fatalf("server-b tools = %+v", tools)
 	}
 }
 
@@ -190,6 +264,110 @@ func TestHostTermcpCoreIntegration(t *testing.T) {
 	}
 }
 
+func TestHostSupervisorReconnectsAfterHealthFailure(t *testing.T) {
+	journal := eventlog.New()
+	first := newFakeHostClient()
+	second := newFakeHostClient()
+	var factoryCalls atomic.Int32
+	host := NewHost(
+		WithHostEventLog(journal),
+		WithHostSupervision(20*time.Millisecond, 80*time.Millisecond, 20*time.Millisecond),
+		withHostClientFactory(func(clientConfig) (clientConnection, error) {
+			if factoryCalls.Add(1) == 1 {
+				return first, nil
+			}
+			return second, nil
+		}),
+	)
+	registerTestServer(t, host)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go host.Run(ctx)
+
+	waitFor(t, func() bool {
+		snapshot := mustSnapshot(t, host, "termcp-core")
+		return snapshot.Ready
+	})
+	first.mu.Lock()
+	first.pingErr = context.DeadlineExceeded
+	first.mu.Unlock()
+
+	waitFor(t, func() bool {
+		snapshot := mustSnapshot(t, host, "termcp-core")
+		return factoryCalls.Load() >= 2 && snapshot.Ready && snapshot.Connection == ConnectionConnected
+	})
+	if !first.closed.Load() {
+		t.Fatal("failed connection was not closed")
+	}
+	window, err := journal.Query(0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unavailable, reconnected int
+	for _, event := range window.Events {
+		switch event.Type {
+		case eventlog.TypeMCPUnavailable:
+			unavailable++
+		case eventlog.TypeMCPConnected:
+			reconnected++
+		}
+	}
+	if unavailable < 1 || reconnected < 2 {
+		t.Fatalf("unavailable=%d connected=%d events=%+v", unavailable, reconnected, window.Events)
+	}
+}
+
+func TestHostSupervisorRefreshesCapabilitiesAfterListChanged(t *testing.T) {
+	client := newFakeHostClient()
+	host := NewHost(
+		WithHostSupervision(20*time.Millisecond, 80*time.Millisecond, time.Second),
+		withHostClientFactory(func(clientConfig) (clientConnection, error) { return client, nil }),
+	)
+	registerTestServer(t, host)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go host.Run(ctx)
+	waitFor(t, func() bool {
+		return mustSnapshot(t, host, "termcp-core").Ready
+	})
+
+	client.notify(mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: mcp.MethodNotificationToolsListChanged,
+		},
+	})
+	waitFor(t, func() bool {
+		snapshot := mustSnapshot(t, host, "termcp-core")
+		return snapshot.Ready && snapshot.CapabilityState == CapabilitiesLoaded
+	})
+}
+
+func TestHostSupervisorConnectsDisabledServerWithoutEnabling(t *testing.T) {
+	client := newFakeHostClient()
+	host := NewHost(
+		WithHostSupervision(20*time.Millisecond, 80*time.Millisecond, time.Second),
+		withHostClientFactory(func(clientConfig) (clientConnection, error) { return client, nil }),
+	)
+	registerTestServer(t, host)
+	if err := host.SetDesiredEnabled("termcp-core", false); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go host.Run(ctx)
+
+	waitFor(t, func() bool {
+		snapshot := mustSnapshot(t, host, "termcp-core")
+		return snapshot.Connection == ConnectionConnected &&
+			snapshot.CapabilityState == CapabilitiesLoaded
+	})
+	snapshot := mustSnapshot(t, host, "termcp-core")
+	if snapshot.Ready || snapshot.Enablement != EnablementDisabled {
+		t.Fatalf("disabled supervisor snapshot = %+v", snapshot)
+	}
+}
+
 func registerTestServer(t *testing.T, host *Host) {
 	t.Helper()
 	if _, err := host.Register(Spec{
@@ -210,6 +388,18 @@ func mustSnapshot(t *testing.T, host *Host, id string) Snapshot {
 	return snapshot
 }
 
+func waitFor(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition was not satisfied before timeout")
+}
+
 type fakeHostClient struct {
 	mu               sync.Mutex
 	notificationFunc func(mcp.JSONRPCNotification)
@@ -220,6 +410,7 @@ type fakeHostClient struct {
 	toolCallFunc     func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	toolCallRequests []mcp.CallToolRequest
 	startErr         error
+	pingErr          error
 	closed           atomic.Bool
 }
 
@@ -250,6 +441,12 @@ func (f *fakeHostClient) Start(context.Context) error {
 
 func (f *fakeHostClient) Initialize(context.Context, mcp.InitializeRequest) (*mcp.InitializeResult, error) {
 	return f.initializeResult, nil
+}
+
+func (f *fakeHostClient) Ping(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pingErr
 }
 
 func (f *fakeHostClient) ListTools(context.Context, mcp.ListToolsRequest) (*mcp.ListToolsResult, error) {

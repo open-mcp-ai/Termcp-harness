@@ -101,6 +101,49 @@ func TestEventsValidatesLimit(t *testing.T) {
 	}
 }
 
+func TestClientReadsCoreIdentityAndOneAgentSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/core":
+			writeTestJSON(w, http.StatusOK, map[string]any{
+				"configured": true,
+				"core": map[string]any{
+					"endpoint": "http://127.0.0.1:18765",
+					"state":    "identified",
+				},
+			})
+		case "/v1/agent/sessions/agent-1":
+			writeTestJSON(w, http.StatusOK, map[string]any{
+				"session": map[string]any{
+					"id":              "agent-1",
+					"core_session_id": "core-1",
+					"state":           "new",
+					"revision":        1,
+				},
+			})
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core, err := client.Core(context.Background())
+	if err != nil || core.Core == nil || core.Core.Endpoint != "http://127.0.0.1:18765" {
+		t.Fatalf("Core() = %+v, error = %v", core, err)
+	}
+	session, err := client.AgentSession(context.Background(), "agent-1")
+	if err != nil || session.Session.CoreSessionID != "core-1" {
+		t.Fatalf("AgentSession() = %+v, error = %v", session, err)
+	}
+	if _, err := client.AgentSession(context.Background(), ""); err == nil {
+		t.Fatal("empty Agent Session ID was accepted")
+	}
+}
+
 func TestClientRejectsUnsafeEndpoints(t *testing.T) {
 	for _, endpoint := range []string{
 		"https://127.0.0.1:8787",
@@ -235,6 +278,105 @@ func TestClientApprovalDecisionRequiresExplicitFields(t *testing.T) {
 	}
 }
 
+func TestClientRefreshesApprovalExecutionWithoutSubmittingDecision(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/approvals/approval-1/execution/refresh" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if len(body) != 0 {
+			t.Errorf("body = %+v", body)
+		}
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"approval": map[string]any{
+				"request": map[string]any{
+					"id": "approval-1", "call_id": "call-1", "status": "approved",
+					"decision": "approve", "revision": 3,
+					"execution": map[string]any{"state": "succeeded"},
+				},
+				"reference": map[string]any{
+					"correlation": "trusted", "approval_id": "approval-1",
+				},
+			},
+			"changed": true, "complete": true,
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	result, err := client.RefreshApprovalExecution(context.Background(), "approval-1", token)
+	if err != nil {
+		t.Fatalf("RefreshApprovalExecution() error = %v", err)
+	}
+	if requests != 1 || !result.Changed || !result.Complete ||
+		result.Approval.Request.Execution == nil ||
+		result.Approval.Request.Execution.State != approval.ExecutionSucceeded {
+		t.Fatalf("requests = %d, result = %+v", requests, result)
+	}
+	if _, err := client.RefreshApprovalExecution(context.Background(), "approval-1", ""); !errors.Is(err, ErrApprovalTokenRequired) {
+		t.Fatalf("missing token error = %v", err)
+	}
+	if _, err := client.RefreshApprovalExecution(context.Background(), "", token); err == nil {
+		t.Fatal("empty approval ID was accepted")
+	}
+}
+
+func TestClientReconcilesUnknownApprovalWithoutSubmittingDecision(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/approvals/approval-1/reconcile" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"approval": map[string]any{
+				"request": map[string]any{
+					"id": "approval-1", "call_id": "call-1", "status": "rejected",
+					"decision": "reject", "revision": 3,
+				},
+				"reference": map[string]any{
+					"correlation": "trusted", "approval_id": "approval-1",
+				},
+			},
+			"changed": true, "resolved": true,
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ReconcileApproval(context.Background(), "approval-1", token)
+	if err != nil {
+		t.Fatalf("ReconcileApproval() error = %v", err)
+	}
+	if requests != 1 || !result.Changed || !result.Resolved ||
+		result.Approval.Request.Status != approval.StatusRejected {
+		t.Fatalf("requests = %d, result = %+v", requests, result)
+	}
+	if _, err := client.ReconcileApproval(context.Background(), "approval-1", ""); !errors.Is(err, ErrApprovalTokenRequired) {
+		t.Fatalf("missing token error = %v", err)
+	}
+}
+
 func TestClientCreatesAndRunsAgentSessionWithoutRetrying(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	runRequests := 0
@@ -286,6 +428,136 @@ func TestClientCreatesAndRunsAgentSessionWithoutRetrying(t *testing.T) {
 		len(result.Calls) != 1 ||
 		result.Calls[0].Status != "approval_pending" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestClientRunsAgentLoopWithExplicitBudgets(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/agent/sessions/session-1/loop" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if body["input"] != "inspect" || body["max_iterations"] != float64(3) ||
+			body["max_tool_calls"] != float64(4) {
+			t.Errorf("body = %+v", body)
+		}
+		writeTestJSON(w, http.StatusAccepted, map[string]any{
+			"session": map[string]any{
+				"id": "session-1", "state": "waiting_approval", "revision": 4,
+				"model_turns": 1, "model_tool_calls": 1,
+			},
+			"calls": []any{map[string]any{
+				"call_id": "call-1", "status": "approval_pending",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	result, err := client.RunAgentLoop(context.Background(), "session-1", "inspect", 3, 4, token)
+	if err != nil {
+		t.Fatalf("RunAgentLoop() error = %v", err)
+	}
+	if result.Session.State != "waiting_approval" || result.Session.ModelTurns != 1 ||
+		len(result.Calls) != 1 || result.Calls[0].Status != "approval_pending" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestClientResumesAgentLoopWithoutSupplyingExecutionConfiguration(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v1/agent/sessions/session-1/loop/resume" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if len(body) != 0 {
+			t.Errorf("resume body = %+v, want empty object", body)
+		}
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"session": map[string]any{
+				"id": "session-1", "state": "completed", "revision": 9,
+				"model_turns": 3, "model_tool_calls": 1,
+			},
+			"output": "resumed",
+			"calls": []any{map[string]any{
+				"call_id": "model-call-1", "status": "succeeded",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ResumeAgentLoop(context.Background(), "session-1", token)
+	if err != nil {
+		t.Fatalf("ResumeAgentLoop() error = %v", err)
+	}
+	if result.Output != "resumed" || result.Session.State != "completed" ||
+		len(result.Calls) != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestClientReadsProtectedAgentSessionTranscript(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet ||
+			request.URL.Path != "/v1/agent/sessions/session-1/transcript" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("authorization mismatch")
+		}
+		writeTestJSON(w, http.StatusOK, map[string]any{
+			"transcript": map[string]any{
+				"session": map[string]any{
+					"id": "session-1", "state": "completed", "revision": 5,
+					"transcript_messages": 2, "output_bytes": 6,
+				},
+				"messages": []any{
+					map[string]any{"role": "user", "content": "hello"},
+					map[string]any{"role": "assistant", "content": "answer"},
+				},
+				"output": "answer",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.AgentSessionTranscript(context.Background(), "session-1", token)
+	if err != nil {
+		t.Fatalf("AgentSessionTranscript() error = %v", err)
+	}
+	if result.Transcript.Output != "answer" || len(result.Transcript.Messages) != 2 ||
+		result.Transcript.Session.TranscriptMessages != 2 {
+		t.Fatalf("transcript = %+v", result.Transcript)
+	}
+	if _, err := client.AgentSessionTranscript(context.Background(), "session-1", ""); !errors.Is(err, ErrApprovalTokenRequired) {
+		t.Fatalf("missing token error = %v", err)
 	}
 }
 

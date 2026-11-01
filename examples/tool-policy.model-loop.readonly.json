@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "server_id": "termcp-core",
+      "tool_name": "term",
+      "effect": "read_only",
+      "arguments": {
+        "cmd": ""
+      },
+      "model_result": "content",
+      "reason": "Expose the Core term guide to the model as a harmless model-loop smoke test"
+    }
+  ]
+}

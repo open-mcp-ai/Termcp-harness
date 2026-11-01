@@ -49,6 +49,14 @@ const (
 	ManagementManaged  ManagementState = "managed"
 )
 
+type TransportKind string
+
+const (
+	TransportStreamableHTTP TransportKind = "streamable-http"
+	TransportSSE            TransportKind = "sse"
+	TransportStdio          TransportKind = "stdio"
+)
+
 type FailureReason string
 
 const (
@@ -75,6 +83,11 @@ type Spec struct {
 	Name       string
 	Endpoint   string
 	Management ManagementState
+	Transport  TransportKind
+	Command    string
+	Args       []string
+	Env        []string
+	WorkDir    string
 	// AuthToken is retained only by the live host and never exposed in snapshots.
 	AuthToken string
 }
@@ -91,6 +104,7 @@ type Snapshot struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
 	Endpoint        string            `json:"endpoint"`
+	Transport       TransportKind     `json:"transport"`
 	Management      ManagementState   `json:"management"`
 	Registration    RegistrationState `json:"registration"`
 	Connection      ConnectionState   `json:"connection"`
@@ -114,12 +128,33 @@ func New(spec Spec) (*Server, error) {
 	if strings.TrimSpace(spec.Name) == "" {
 		return nil, errors.New("MCP server name is required")
 	}
-	endpoint, err := validateLoopbackEndpoint(spec.Endpoint)
-	if err != nil {
-		return nil, err
+	if spec.Transport == "" {
+		spec.Transport = TransportStreamableHTTP
 	}
 	if spec.Management == "" {
 		spec.Management = ManagementExternal
+	}
+	endpoint := ""
+	switch spec.Transport {
+	case TransportStreamableHTTP, TransportSSE:
+		normalized, err := validateLoopbackEndpoint(spec.Endpoint)
+		if err != nil {
+			return nil, err
+		}
+		endpoint = normalized
+		if spec.Command != "" || len(spec.Args) != 0 || len(spec.Env) != 0 || spec.WorkDir != "" {
+			return nil, errors.New("HTTP MCP transport must not include stdio process settings")
+		}
+	case TransportStdio:
+		if strings.TrimSpace(spec.Command) == "" {
+			return nil, errors.New("stdio MCP transport requires a command")
+		}
+		if spec.Endpoint != "" || spec.AuthToken != "" {
+			return nil, errors.New("stdio MCP transport must not include endpoint or auth token")
+		}
+		spec.Management = ManagementManaged
+	default:
+		return nil, fmt.Errorf("invalid MCP transport %q", spec.Transport)
 	}
 	if spec.Management != ManagementExternal && spec.Management != ManagementManaged {
 		return nil, fmt.Errorf("invalid MCP management state %q", spec.Management)
@@ -129,6 +164,7 @@ func New(spec Spec) (*Server, error) {
 		ID:              spec.ID,
 		Name:            spec.Name,
 		Endpoint:        endpoint,
+		Transport:       spec.Transport,
 		Management:      spec.Management,
 		Registration:    RegistrationDiscovered,
 		Connection:      ConnectionNotAttempted,

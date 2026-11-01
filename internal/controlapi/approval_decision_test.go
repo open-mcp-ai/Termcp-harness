@@ -173,6 +173,29 @@ func TestApprovalDecisionKeepsConfirmedStateWhenEventRecordingFails(t *testing.T
 	}
 }
 
+func TestApprovalDecisionReportsApprovalPersistenceFailure(t *testing.T) {
+	decider := &fakeApprovalDecider{
+		snapshot: approval.Snapshot{
+			ID: "approval-1", CallID: "call-1", Status: approval.StatusApproved,
+			Decision: approval.DecisionApprove, Revision: 3,
+		},
+		err: approval.ErrApprovalPersistence,
+	}
+	handler := testApprovalDecisionHandler(t, decider)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, decisionRequest(`{"decision":"approve","expected_revision":1}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var body approvalDecisionResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(body.Warning, "history persistence") {
+		t.Fatalf("warning = %q", body.Warning)
+	}
+}
+
 func TestApprovalDecisionMapsConflicts(t *testing.T) {
 	tests := []struct {
 		err    error

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -54,6 +56,18 @@ type clientConnection interface {
 
 type clientFactory func(string, string) (clientConnection, error)
 
+type clientConfig struct {
+	Transport  TransportKind
+	Endpoint   string
+	AuthToken  string
+	Command    string
+	Args       []string
+	Env        []string
+	WorkingDir string
+}
+
+type hostClientFactory func(clientConfig) (clientConnection, error)
+
 type Prober struct {
 	factory clientFactory
 }
@@ -70,6 +84,41 @@ func defaultClientFactory(endpoint, authToken string) (clientConnection, error) 
 		}))
 	}
 	return client.NewStreamableHttpClient(endpoint, options...)
+}
+
+func defaultHostClientFactory(config clientConfig) (clientConnection, error) {
+	switch config.Transport {
+	case TransportStreamableHTTP:
+		return defaultClientFactory(config.Endpoint, config.AuthToken)
+	case TransportSSE:
+		var options []transport.ClientOption
+		if config.AuthToken != "" {
+			options = append(options, transport.WithHeaders(map[string]string{
+				"Authorization": "Bearer " + config.AuthToken,
+			}))
+		}
+		return client.NewSSEMCPClient(config.Endpoint, options...)
+	case TransportStdio:
+		stdio := transport.NewStdioWithOptions(
+			config.Command,
+			append([]string(nil), config.Env...),
+			append([]string(nil), config.Args...),
+			transport.WithCommandFunc(func(
+				ctx context.Context,
+				command string,
+				env []string,
+				args []string,
+			) (*exec.Cmd, error) {
+				cmd := exec.CommandContext(ctx, command, args...)
+				cmd.Env = append(os.Environ(), env...)
+				cmd.Dir = config.WorkingDir
+				return cmd, nil
+			}),
+		)
+		return client.NewClient(stdio), nil
+	default:
+		return nil, fmt.Errorf("unsupported MCP transport %q", config.Transport)
+	}
 }
 
 func (p *Prober) Probe(ctx context.Context, options ProbeOptions) (Observation, error) {
@@ -176,7 +225,7 @@ func readTools(ctx context.Context, mcpClient interface {
 		}
 		seen[tool.Name] = struct{}{}
 
-		encoded, err := json.Marshal(tool)
+		encoded, err := json.Marshal(tool.InputSchema)
 		if err != nil {
 			return nil, fmt.Errorf("encode schema for MCP tool %q: %w", tool.Name, err)
 		}

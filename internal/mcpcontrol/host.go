@@ -21,6 +21,9 @@ const (
 	defaultMaxToolResultSize    = 4 << 20
 	defaultHostClientName       = "termcp-harness"
 	defaultHostClientVersion    = "dev"
+	defaultReconnectMin         = 1 * time.Second
+	defaultReconnectMax         = 30 * time.Second
+	defaultHealthInterval       = 30 * time.Second
 )
 
 type HostOptions struct {
@@ -32,13 +35,16 @@ type HostOptions struct {
 	MaxSchemaBytes       int
 	MaxToolArgumentsSize int
 	MaxToolResultSize    int
+	ReconnectMin         time.Duration
+	ReconnectMax         time.Duration
+	HealthInterval       time.Duration
 }
 
 type HostOption func(*hostConfig)
 
 type hostConfig struct {
 	journal *eventlog.Journal
-	factory clientFactory
+	factory hostClientFactory
 	options HostOptions
 }
 
@@ -48,9 +54,27 @@ func WithHostEventLog(journal *eventlog.Journal) HostOption {
 	}
 }
 
-func withHostClientFactory(factory clientFactory) HostOption {
+func withHostClientFactory(factory hostClientFactory) HostOption {
 	return func(config *hostConfig) {
 		config.factory = factory
+	}
+}
+
+func WithHostSupervision(
+	reconnectMin time.Duration,
+	reconnectMax time.Duration,
+	healthInterval time.Duration,
+) HostOption {
+	return func(config *hostConfig) {
+		if reconnectMin > 0 {
+			config.options.ReconnectMin = reconnectMin
+		}
+		if reconnectMax > 0 {
+			config.options.ReconnectMax = reconnectMax
+		}
+		if healthInterval > 0 {
+			config.options.HealthInterval = healthInterval
+		}
 	}
 }
 
@@ -58,23 +82,34 @@ func withHostClientFactory(factory clientFactory) HostOption {
 // Registration, connection, capability loading, enablement, and readiness stay
 // separate states.
 type Host struct {
-	mu      sync.RWMutex
-	servers map[string]*managedServer
-	options hostConfig
+	mu         sync.RWMutex
+	servers    map[string]*managedServer
+	options    hostConfig
+	runCancel  context.CancelFunc
+	runContext context.Context
 }
 
 type managedServer struct {
-	mu          sync.Mutex
-	server      *Server
-	client      clientConnection
-	initialized *mcp.InitializeResult
-	tools       []ToolDescriptor
-	authToken   string
+	mu               sync.Mutex
+	server           *Server
+	client           clientConnection
+	connectionCancel context.CancelFunc
+	initialized      *mcp.InitializeResult
+	tools            []ToolDescriptor
+	clientConfig     clientConfig
+
+	desiredEnabled   bool
+	desiredConnected bool
+	autoReconnect    bool
+	backoff          time.Duration
+	nextAttempt      time.Time
+	nextHealth       time.Time
+	supervising      bool
 }
 
 func NewHost(options ...HostOption) *Host {
 	config := hostConfig{
-		factory: defaultClientFactory,
+		factory: defaultHostClientFactory,
 		options: HostOptions{
 			ClientName:           defaultHostClientName,
 			ClientVersion:        defaultHostClientVersion,
@@ -84,6 +119,9 @@ func NewHost(options ...HostOption) *Host {
 			MaxSchemaBytes:       defaultMaxSchemaBytes,
 			MaxToolArgumentsSize: defaultMaxToolArgumentsSize,
 			MaxToolResultSize:    defaultMaxToolResultSize,
+			ReconnectMin:         defaultReconnectMin,
+			ReconnectMax:         defaultReconnectMax,
+			HealthInterval:       defaultHealthInterval,
 		},
 	}
 	for _, option := range options {
@@ -113,7 +151,24 @@ func (h *Host) Register(spec Spec) (Snapshot, error) {
 		h.mu.Unlock()
 		return Snapshot{}, fmt.Errorf("MCP server %q is already registered", spec.ID)
 	}
-	h.servers[spec.ID] = &managedServer{server: server, authToken: spec.AuthToken}
+	managed := &managedServer{
+		server: server,
+		clientConfig: clientConfig{
+			Transport:  snapshot.Transport,
+			Endpoint:   snapshot.Endpoint,
+			AuthToken:  spec.AuthToken,
+			Command:    spec.Command,
+			Args:       append([]string(nil), spec.Args...),
+			Env:        append([]string(nil), spec.Env...),
+			WorkingDir: spec.WorkDir,
+		},
+		desiredConnected: true,
+		desiredEnabled:   true,
+		autoReconnect:    true,
+		backoff:          h.options.options.ReconnectMin,
+	}
+	h.servers[spec.ID] = managed
+	h.startSupervisorLocked(spec.ID, managed)
 	h.mu.Unlock()
 
 	if err := h.record(eventlog.TypeMCPRegistered, snapshot, nil); err != nil {
@@ -129,6 +184,12 @@ func (h *Host) Connect(ctx context.Context, id string) error {
 	}
 	managed.mu.Lock()
 	defer managed.mu.Unlock()
+	managed.desiredConnected = true
+	managed.autoReconnect = true
+	if managed.connectionCancel != nil {
+		managed.connectionCancel()
+		managed.connectionCancel = nil
+	}
 
 	current := managed.server.Snapshot()
 	if current.Connection == ConnectionConnected {
@@ -142,15 +203,22 @@ func (h *Host) Connect(ctx context.Context, id string) error {
 		return err
 	}
 
-	operationContext, cancel := context.WithTimeout(ctx, h.options.options.Timeout)
-	defer cancel()
+	operationContext, cancelOperation := context.WithTimeout(ctx, h.options.options.Timeout)
+	defer cancelOperation()
+	lifecycleParent := h.runContext
+	if lifecycleParent == nil {
+		lifecycleParent = context.Background()
+	}
+	connectionContext, cancelConnection := context.WithCancel(lifecycleParent)
 
-	connection, err := h.options.factory(next.Endpoint, managed.authToken)
+	connection, err := h.options.factory(managed.clientConfig)
 	if err != nil {
+		cancelConnection()
 		return h.fail(managed, classifyFailure(err), fmt.Errorf("create MCP client: %w", err))
 	}
-	if err := connection.Start(operationContext); err != nil {
+	if err := connection.Start(connectionContext); err != nil {
 		_ = connection.Close()
+		cancelConnection()
 		return h.fail(managed, classifyFailure(err), fmt.Errorf("start MCP client: %w", err))
 	}
 	initialized, err := connection.Initialize(operationContext, mcp.InitializeRequest{
@@ -164,19 +232,25 @@ func (h *Host) Connect(ctx context.Context, id string) error {
 	})
 	if err != nil {
 		_ = connection.Close()
+		cancelConnection()
 		return h.fail(managed, classifyFailure(err), fmt.Errorf("initialize MCP server: %w", err))
 	}
 	if err := validateInitializeResult(initialized); err != nil {
 		_ = connection.Close()
+		cancelConnection()
 		return h.fail(managed, FailureProtocol, err)
 	}
 
 	managed.client = connection
+	managed.connectionCancel = cancelConnection
 	managed.initialized = initialized
 	managed.tools = nil
+	managed.nextHealth = time.Now().Add(h.options.options.HealthInterval)
 	connected, err := managed.server.MarkConnected(managed.server.Snapshot().Revision)
 	if err != nil {
 		_ = connection.Close()
+		cancelConnection()
+		managed.connectionCancel = nil
 		managed.client = nil
 		managed.initialized = nil
 		return err
@@ -249,6 +323,9 @@ func (h *Host) Enable(id string) (Snapshot, error) {
 	}
 	managed.mu.Lock()
 	defer managed.mu.Unlock()
+	managed.desiredEnabled = true
+	managed.desiredConnected = true
+	managed.autoReconnect = true
 
 	snapshot, err := managed.server.Enable(managed.server.Snapshot().Revision)
 	if err != nil {
@@ -267,6 +344,7 @@ func (h *Host) Disable(id string) (Snapshot, error) {
 	}
 	managed.mu.Lock()
 	defer managed.mu.Unlock()
+	managed.desiredEnabled = false
 
 	snapshot, err := managed.server.Disable(managed.server.Snapshot().Revision)
 	if err != nil {
@@ -285,9 +363,15 @@ func (h *Host) Disconnect(id string) error {
 	}
 	managed.mu.Lock()
 	defer managed.mu.Unlock()
+	managed.autoReconnect = false
+	managed.desiredConnected = false
 
 	if managed.client != nil {
 		_ = managed.client.Close()
+	}
+	if managed.connectionCancel != nil {
+		managed.connectionCancel()
+		managed.connectionCancel = nil
 	}
 	managed.client = nil
 	managed.initialized = nil
@@ -347,6 +431,12 @@ func (h *Host) Close() error {
 	if h == nil {
 		return nil
 	}
+	h.mu.Lock()
+	if h.runCancel != nil {
+		h.runCancel()
+		h.runCancel = nil
+	}
+	h.mu.Unlock()
 	h.mu.RLock()
 	ids := make([]string, 0, len(h.servers))
 	for id := range h.servers {
@@ -365,6 +455,10 @@ func (h *Host) Close() error {
 			if err := managed.client.Close(); err != nil {
 				closeErrors = append(closeErrors, fmt.Errorf("close MCP server %q: %w", id, err))
 			}
+		}
+		if managed.connectionCancel != nil {
+			managed.connectionCancel()
+			managed.connectionCancel = nil
 		}
 		managed.client = nil
 		managed.initialized = nil
@@ -418,6 +512,10 @@ func (h *Host) fail(managed *managedServer, reason FailureReason, cause error) e
 	if managed.client != nil {
 		_ = managed.client.Close()
 		managed.client = nil
+	}
+	if managed.connectionCancel != nil {
+		managed.connectionCancel()
+		managed.connectionCancel = nil
 	}
 	managed.initialized = nil
 	managed.tools = nil

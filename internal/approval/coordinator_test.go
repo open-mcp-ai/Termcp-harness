@@ -461,6 +461,72 @@ func TestCoordinatorUsesRemoteExpirationWithoutLocalInference(t *testing.T) {
 	}
 }
 
+func TestCoordinatorManualExecutionRefreshIsReadOnlyAndAlwaysNotifies(t *testing.T) {
+	started := time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC)
+	finished := started.Add(time.Second)
+	client := &fakeRecoveringDecisionClient{
+		fakeDecisionClient: &fakeDecisionClient{},
+		lookupOutcome: DecisionOutcome{
+			Status: StatusApproved,
+			Execution: &Execution{
+				State: ExecutionSucceeded, StartedAt: started, FinishedAt: &finished,
+			},
+		},
+	}
+	observer := &fakeDecisionObserver{}
+	journal := eventlog.New()
+	coordinator, err := NewCoordinator(journal, client, WithDecisionObserver(observer))
+	if err != nil {
+		t.Fatalf("NewCoordinator() error = %v", err)
+	}
+	tracked := trackTestApproval(t, coordinator, "approval-1", "call-1")
+	approveTrackedTestRequest(t, coordinator, tracked.Request.ID)
+
+	refreshed, err := coordinator.RefreshExecution(context.Background(), tracked.Request.ID)
+	if err != nil {
+		t.Fatalf("RefreshExecution() error = %v", err)
+	}
+	if refreshed.Approval.Request.Status != StatusApproved || refreshed.Approval.Request.Execution == nil ||
+		refreshed.Approval.Request.Execution.State != ExecutionSucceeded ||
+		!refreshed.Changed || !refreshed.Complete {
+		t.Fatalf("refreshed = %+v", refreshed)
+	}
+	if len(client.Calls()) != 0 || client.lookups != 1 {
+		t.Fatalf("decision calls = %d, lookups = %d", len(client.Calls()), client.lookups)
+	}
+
+	if _, err := coordinator.RefreshExecution(context.Background(), tracked.Request.ID); err != nil {
+		t.Fatalf("second RefreshExecution() error = %v", err)
+	}
+	if len(client.Calls()) != 0 || client.lookups != 2 {
+		t.Fatalf("decision calls = %d, lookups = %d", len(client.Calls()), client.lookups)
+	}
+	observations := observer.Observations()
+	if len(observations) != 2 {
+		t.Fatalf("observer calls = %d, want 2", len(observations))
+	}
+	for _, observation := range observations {
+		if observation.CallID != "call-1" || observation.Snapshot.Execution == nil ||
+			observation.Snapshot.Execution.State != ExecutionSucceeded {
+			t.Fatalf("observation = %+v", observation)
+		}
+	}
+
+	window, err := journal.Query(0, 100)
+	if err != nil {
+		t.Fatalf("journal Query() error = %v", err)
+	}
+	refreshedEvents := 0
+	for _, event := range window.Events {
+		if event.Type == eventlog.TypeApprovalExecutionRefreshed {
+			refreshedEvents++
+		}
+	}
+	if refreshedEvents != 2 {
+		t.Fatalf("refresh event count = %d, want 2", refreshedEvents)
+	}
+}
+
 func TestNewCoordinatorValidatesDependencies(t *testing.T) {
 	if _, err := NewCoordinator(nil, &fakeDecisionClient{}); err == nil {
 		t.Fatal("NewCoordinator(nil client journal) error = nil")
@@ -592,6 +658,26 @@ func trackTestApproval(t *testing.T, coordinator *Coordinator, id, callID string
 		t.Fatalf("Track() error = %v", err)
 	}
 	return tracked
+}
+
+func approveTrackedTestRequest(t *testing.T, coordinator *Coordinator, id string) Snapshot {
+	t.Helper()
+	entry, err := coordinator.lookup(id)
+	if err != nil {
+		t.Fatalf("lookup() error = %v", err)
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	current := entry.request.Snapshot()
+	submitting, err := entry.request.Apply(current.Revision, EventSubmitApprove)
+	if err != nil {
+		t.Fatalf("Apply(submit approve) error = %v", err)
+	}
+	approved, err := entry.request.Apply(submitting.Revision, EventConfirmApproved)
+	if err != nil {
+		t.Fatalf("Apply(confirm approved) error = %v", err)
+	}
+	return approved
 }
 
 func assertJournalTypes(t *testing.T, journal *eventlog.Journal, want []eventlog.Type) {

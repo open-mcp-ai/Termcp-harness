@@ -52,12 +52,14 @@ var (
 )
 
 type Snapshot struct {
-	ID        string     `json:"id"`
-	CallID    string     `json:"call_id"`
-	Status    Status     `json:"status"`
-	Decision  Decision   `json:"decision"`
-	Revision  Revision   `json:"revision"`
-	Execution *Execution `json:"execution,omitempty"`
+	ID             string     `json:"id"`
+	CallID         string     `json:"call_id"`
+	Status         Status     `json:"status"`
+	Decision       Decision   `json:"decision"`
+	Revision       Revision   `json:"revision"`
+	Execution      *Execution `json:"execution,omitempty"`
+	Recovered      bool       `json:"recovered,omitempty"`
+	RecoveryReason string     `json:"recovery_reason,omitempty"`
 }
 
 type Request struct {

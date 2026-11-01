@@ -3,8 +3,10 @@ module github.com/open-mcp-ai/termcp-harness
 go 1.27
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/mark3labs/mcp-go v0.50.0
 	github.com/wailsapp/wails/v2 v2.15.0
+	golang.org/x/sys v0.46.0
 )
 
 require (
@@ -14,7 +16,6 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/labstack/echo/v4 v4.13.3 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
@@ -38,6 +39,5 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
 )

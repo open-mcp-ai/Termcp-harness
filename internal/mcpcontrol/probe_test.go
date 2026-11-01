@@ -2,6 +2,7 @@ package mcpcontrol
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -39,6 +40,13 @@ func TestProbeInitializesAndLoadsTools(t *testing.T) {
 	}
 	if !observation.ToolsSupported || len(observation.Tools) != 1 || observation.Tools[0].Name != "term" {
 		t.Fatalf("observation tools = %+v", observation.Tools)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(observation.Tools[0].Schema, &schema); err != nil {
+		t.Fatalf("decode tool schema: %v", err)
+	}
+	if schema["type"] != "object" || schema["inputSchema"] != nil {
+		t.Fatalf("tool schema = %+v", schema)
 	}
 	if observation.Capabilities().ToolCount != 1 {
 		t.Fatalf("Capabilities() = %+v", observation.Capabilities())

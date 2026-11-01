@@ -56,3 +56,22 @@ func TestAllowlistPolicyRequiresExplicitEffectAndObjectArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowlistPolicyValidatesModelResultMode(t *testing.T) {
+	if _, err := NewAllowlistPolicy(Rule{
+		ServerID: "termcp-core", ToolName: "term", Effect: toolcall.EffectReadOnly,
+		Arguments: json.RawMessage(`{}`), ModelResult: "unbounded",
+	}); err == nil {
+		t.Fatal("invalid model_result mode was accepted")
+	}
+	policy, err := NewAllowlistPolicy(Rule{
+		ServerID: "termcp-core", ToolName: "term", Effect: toolcall.EffectReadOnly,
+		Arguments: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rules := policy.Rules(); len(rules) != 1 || rules[0].ModelResult != ModelResultNone {
+		t.Fatalf("rules = %+v", rules)
+	}
+}

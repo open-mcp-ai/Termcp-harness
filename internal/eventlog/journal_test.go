@@ -1,12 +1,38 @@
 package eventlog
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestWaitWakesOnAppendAndHonorsCancellation(t *testing.T) {
+	journal := newTestJournal(4, 4)
+	waited := make(chan error, 1)
+	go func() {
+		waited <- journal.Wait(context.Background())
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	appendEvent(t, journal, TypeRuntimeStarted, ClassControl)
+	select {
+	case err := <-waited:
+		if err != nil {
+			t.Fatalf("Wait() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Wait() did not wake after append")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := journal.Wait(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Wait(cancelled) error = %v", err)
+	}
+}
 
 func TestAppendAndQueryInLocalSequenceOrder(t *testing.T) {
 	journal := newTestJournal(4, 4)
