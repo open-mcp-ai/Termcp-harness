@@ -34,7 +34,7 @@ Core 计划基线：
 - Core v0.2.8 的未关闭上游问题和严格契约测试统一登记在 `core/v0.2.8/known-issues.md`；Core 相关开发和汇报必须先检查该文件。
 - 本机 Core 源码 clone 仍落后于该快照，不能直接作为 v0.2.8 的证明。
 - 公开文档、实际代码、集成测试和团队确认的证据强度不同，必须分别记录。
-- Harness Runtime 已有 Headless 骨架、本地控制 API v1 草案、工具/审批状态机和 MCP Server 状态模型，见 `harness/v0.1/`；兼容性尚未承诺。
+- Harness Runtime 已有 Headless 骨架、本地控制 API v1 草案、工具/审批状态机、MCP Server 状态模型和首个 OpenAI-compatible 模型 Adapter/Agent Loop，见 `harness/v0.1/`；兼容性尚未承诺。
 - 外部 MCP Server 必须记录其服务器版本、协议版本和能力快照。
 
 ## 建议目录结构
@@ -111,4 +111,4 @@ docs/contracts/
 
 ## 当前状态
 
-Harness 本地控制 API v1 草案已有代码、单元测试和进程冒烟测试覆盖；工具调用与审批状态机已有独立单元/竞态测试。MCP 探测器已对 Core v0.2.8 完成真实 `initialize`/`tools/list`。这些仍不等于完整兼容性或行为语义验证；外部 MCP 尚无正式契约快照。
+Harness 本地控制 API v1 草案已有代码、单元测试和进程冒烟测试覆盖；工具调用与审批状态机已有独立单元/竞态测试。审批协调器现已支持可选历史持久化，重启时未确认决定 fail-closed 为 `unknown`，并可经只读 Core Lookup 显式收敛。MCP Host 已支持 Streamable HTTP、SSE、stdio、多来源配置、Bearer 凭据引用、健康检查、自动重连和能力刷新，并对 Core v0.2.8 完成真实 `initialize`/`tools/list`。非 Core stdio MCP 已通过 Agent Session 工具调用闭环。Desktop Terminal 固定桥 PoC 已通过真实 Core 的 Shell 查询、历史恢复、WebSocket watch、输入、输出、resize、20,000 行性能和关闭测试，契约见 `harness/v0.1/terminal-bridge.md`。事件日志已提供 SSE、cursor 重连、Desktop 有界桥接和可选有界文件持久化，契约见 `harness/v0.1/event-log.md`。这些仍不等于完整兼容性或行为语义验证；OAuth、跨 Store 原子提交、事件归档/压缩和每个第三方 MCP 的正式契约快照尚未完成。

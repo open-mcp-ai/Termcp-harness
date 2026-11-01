@@ -1,6 +1,6 @@
 # Harness MCP Server 状态 v1（草案）
 
-> 状态：持久 Streamable HTTP 连接、能力读取、启用/停用、断连、`tools/list_changed` 失效和 Event Log 已接入；认证与自动重连尚未实现。
+> 状态：持久 Streamable HTTP、SSE、stdio、受管 stdio 子进程、能力读取、启用/停用、健康检查、退避重连、能力自动刷新、Bearer 凭据引用和 Event Log 已接入。
 >
 > 实现：`internal/mcpcontrol`
 
@@ -15,6 +15,7 @@
 | 能力 | `not_loaded`、`loading`、`loaded`、`stale` |
 | 启用 | `disabled`、`enabled` |
 | 所有权 | `external`、`managed` |
+| 传输 | `streamable-http`、`sse`、`stdio` |
 
 `ready` 是派生值，只有同时满足以下条件才为真：
 
@@ -33,8 +34,10 @@
 - 断连或不可用会把 `loaded` 能力标为 `stale`，旧的工具 Schema 不能继续视为可用。
 - 连接丢失保留用户的 `enabled` 偏好，但 `ready=false`；恢复后必须重新读取能力。
 - `managed` 与 `external` 描述所有权，不表示网络健康、权限或启用状态。
+- stdio 强制为 `managed`；子进程由 mcp-go transport 持有，断连/关闭时终止并回收。
 - 失败原因只保存受限枚举，不保存任意服务端错误文本，避免凭据或终端内容进入状态。
 - 状态更新使用 revision compare-and-swap，旧连接或旧能力结果不能覆盖新状态。
+- 能力读取后的 `ToolDescriptor.Schema` 必须是 MCP `inputSchema` 本身；禁止把 `{annotations,description,inputSchema,name}` 完整 Tool 对象作为参数 Schema 投影给模型或调用方。
 
 ## 3. 当前网络边界
 
@@ -56,9 +59,17 @@ Register
 - `LoadCapabilities` 失败会把连接标为 `unavailable`，不保留可用工具引用。
 - `Disable` 保留连接和能力，但从工作区撤销能力。
 - `Disconnect` 关闭客户端并保留用户的启用偏好，能力变为 `stale`。
-- `notifications/tools/list_changed` 只把能力标为 `stale` 和 `Ready=false`，不自动重读，也不继续使用旧 Schema。
+- `notifications/tools/list_changed` 先把能力标为 `stale` 和 `Ready=false`；supervisor 随后自动重读能力，不继续使用旧 Schema。
 - 并发 `Connect` 只建立一个客户端；旧异步结果不能覆盖更新的 revision。
 - 生命周期控制事件写入 Event Log，事件不包含凭据或工具结果。
+
+Host supervisor：
+
+- 初始连接、能力读取和启用由统一 supervisor 执行。
+- 已连接时默认每 30 秒发送 MCP `ping`；失败立即把连接标为 `unavailable`。
+- 非预期断连按 1 秒到 30 秒指数退避重连；重连后必须重新读取能力，再按原启用偏好决定是否启用。
+- `Disable` 保留连接和监督；`Disconnect` 停止自动重连，直到显式 `Connect` 或 `Enable`。
+- `Ready=false` 期间旧工具引用不可用。
 
 Runtime 启动时可用以下选项接入一个回环 Streamable HTTP Server：
 
@@ -70,10 +81,77 @@ go run ./cmd/termcp-harness serve `
 
 可选参数：`--mcp-id`、`--mcp-name`、`--mcp-enable=false`。连接和初始能力读取在后台执行；失败只显示 `unavailable`，不会阻止 Headless Runtime 启动。
 
-## 5. 尚未支持
+认证与退避参数：
+
+```powershell
+go run ./cmd/termcp-harness serve `
+  --mcp-endpoint http://127.0.0.1:18765/stream `
+  --mcp-auth-token-file '<private-token-file>' `
+  --mcp-reconnect-min 1s `
+  --mcp-reconnect-max 30s `
+  --mcp-health-interval 30s
+```
+
+- Token 只从受限文件读取，不进入命令行、URL、Snapshot、Event Log、Desktop 或普通日志。
+- 仅当 Core 与 MCP endpoint 是完全相同的 HTTP origin 时，才把 MCP Token 复用于 Core 身份和审批客户端；不同 origin 不复用。
+- Token 文件为空、超限或 POSIX 下 group/other 可读时拒绝启动。
+
+SSE：
+
+```powershell
+go run ./cmd/termcp-harness serve `
+  --mcp-transport sse `
+  --mcp-endpoint http://127.0.0.1:18765/sse
+```
+
+stdio：
+
+```powershell
+go run ./cmd/termcp-harness serve `
+  --mcp-transport stdio `
+  --mcp-stdio-command '<mcp-server-executable>' `
+  --mcp-stdio-arg '<arg>' `
+  --mcp-stdio-workdir '<working-directory>'
+```
+
+stdio 命令、参数和工作目录只来自启动配置；控制 API 和 Desktop 不提供任意命令执行入口。stdio 不得配置 endpoint 或 Bearer Token，子进程继承 Runtime 环境并追加显式环境项。
+
+## 5. 多来源配置
+
+`--mcp-config-file` 可注册最多 31 个额外 MCP Server，并可与现有单 Core MCP 参数并存：
+
+```json
+{
+  "servers": [
+    {
+      "id": "external-http",
+      "name": "External HTTP",
+      "transport": "streamable-http",
+      "endpoint": "http://127.0.0.1:18888/stream",
+      "auth_token_file": "external.token",
+      "enabled": true
+    },
+    {
+      "id": "external-stdio",
+      "name": "External Stdio",
+      "transport": "stdio",
+      "command": "<mcp-server-executable>",
+      "args": [],
+      "enabled": false
+    }
+  ]
+}
+```
+
+- 文件最大 1 MiB，拒绝未知字段、重复 ID 和无效 transport。
+- `auth_token_file` 和相对 `workdir` 相对于配置文件目录解析。
+- Token 只在启动时读入内存，不进入 Snapshot、Event、URL 或 Desktop。
+- 每个 Server 独立维护连接、能力、enablement、revision 和 supervisor。
+- 工具冲突使用显式 `server_id + tool_name` 命名空间；同名工具不合并，也不按注册顺序猜测来源。
+- Agent Step 和 allowlist 规则必须写明 `server_id`。
+
+## 6. 尚未支持
 
 - 非回环 MCP endpoint；
-- HTTP 认证头和凭据引用；
-- SSE 与 stdio 的持久连接；
-- 自动重连、退避、健康检查和后台能力刷新；
-- 受管 MCP 子进程生命周期。
+- OAuth 交互和动态凭据刷新；
+- 独立于 MCP transport 的 PID/进程树所有权诊断。

@@ -6,7 +6,7 @@
 >
 > 关联：`docs/adr/ADR-013-harness-canvas-layout.md`、`docs/architecture/DESIGN_v0.4.md`、`docs/contracts/harness/v0.1/desktop-shell.md`、`docs/ux/UX-RECOVERY.md`
 
-> 推进记录（2026-10-31）：UX-BL-001 至 UX-BL-004 已提前完成前端切片；UX-BL-005 已实现 schema v2 与旧布局迁移，Workspace 导入导出、损坏恢复和跨 Workspace 迁移仍未实现。验证使用模拟 Desktop bridge 的浏览器交互回归、Wails production build，以及连接真实 Harness/Core 的 Wails Desktop 回归。真实 Desktop 已验证 Session 跟随/锁定、关联未知、后台任务计数、关闭面板不停止 Core Session，以及从批准按钮到服务端确认和远程文件回读的完整正向审批闭环；Canvas 保序 PTY 字节流和实时订阅仍未接入。
+> 推进记录（2026-10-31）：UX-BL-001 至 UX-BL-004 已提前完成前端切片；UX-BL-005 已实现 schema v2、旧布局读取兼容、Workspace Recipe v1 导入导出、单面板损坏隔离、有界撤销/重做、重启后布局恢复和跨 Workspace 布局复制，完整跨版本迁移与移动语义仍未实现。验证使用模拟 Desktop bridge 的浏览器交互回归、Wails production build，以及连接真实 Harness/Core 的 Wails Desktop 回归。真实 Desktop 已验证 Session 跟随/锁定、关联未知、后台任务计数、关闭面板不停止 Core Session，以及从批准按钮到服务端确认和远程文件回读的完整正向审批闭环。固定 Desktop Terminal 桥已通过真实 Core 集成测试，并在真实 Wails 窗口验证人工输入/输出、关闭视图后 Shell 保持、重开历史恢复和 Shell 结束状态。Harness SSE 与 Desktop 固定事件桥已验证实时 Session/Activity 更新和 cursor 重连。
 
 ## 使用规则
 
@@ -17,7 +17,7 @@
 
 ## UX-BL-001：跨面板上下文跟随与锁定
 
-**实现状态：** 前端切片已实现（2026-10-31）。Workspace 可选择当前 Session；Agent、审批、Terminal 和 Activity 面板显示“跟随当前/已锁定/关联未知”，锁定状态随布局持久化。真实 Session 切换和实时订阅仍待对应功能接入。
+**实现状态：** 前端切片、Terminal 真实 Core 上下文切片和实时事件订阅已实现（2026-10-31）。Workspace 可选择当前 Session；Agent、审批、Terminal 和 Activity 面板显示“跟随当前/已锁定/关联未知”，锁定状态随布局持久化。Terminal 只使用可信 `core_session_id` 和 Shell 列表，真实 Session 切换已接入。
 
 **问题**
 
@@ -102,7 +102,7 @@
 
 ## UX-BL-004：审批与时间线以服务端权威状态收敛
 
-**实现状态：** 前端切片已实现（2026-10-31）。审批提交显示“提交中”，成功后才根据服务端回执更新，未知结果保持“结果未知”；Activity 显示 subject/correlation 并明确标记关联未知。当前仍为轮询快照，实时事件订阅、重连补齐和真实晚到回执测试尚未接入。
+**实现状态：** 前端切片、实时事件切片、`waiting_execution` 人工核对入口和客户端 cursor 持久化已实现（2026-10-31）。审批提交显示“提交中”，成功后才根据服务端回执更新，未知结果保持“结果未知”；每条审批可展开精确 ID 关联的时间线，Activity 仍显示 subject/correlation 并明确标记关联未知。`waiting_execution` 可从受限只读入口重新核对 Core Execution 并触发已有可信证据上的步骤恢复，不重提审批或工具调用。SSE 事件触发合并快照刷新并支持 cursor 重连，仍保留 15 秒兜底轮询；cursor 按 Runtime endpoint 和 instance ID 保存，实例变化时安全重置。真实晚到回执、审批断线专项测试和真实 Wails 进程重启恢复尚未验证。
 
 **问题**
 
@@ -129,7 +129,7 @@
 
 ## UX-BL-005：可序列化状态的版本、迁移与清理
 
-**实现状态：** 部分实现（2026-10-31）。已增加 schema version、旧布局读取兼容、稳定面板 ID 和显式上下文绑定；导入导出、单面板损坏隔离、完整迁移诊断和跨 Workspace 清理仍未实现。
+**实现状态：** 部分实现（2026-10-31）。已增加 schema version、旧布局读取兼容、稳定面板 ID、显式上下文绑定、Workspace Recipe v1 导入导出、字段白名单、单面板损坏隔离、导入预览警告、有界撤销/重做、重启后历史恢复和跨 Workspace 布局复制；Recipe 跨版本迁移与跨 Workspace 移动语义仍未实现。
 
 **问题**
 
@@ -153,3 +153,19 @@ Workspace 导入导出、持久化格式首次发布、跨版本升级、跨 Wor
 - 损坏的单个面板或上下文绑定不会导致整个 Workspace 无法打开。
 - 敏感字段持久化检查通过，运行中句柄不会被恢复成伪造的实时连接。
 - 清理只删除明确拥有的本地布局或允许清理的数据，不终止未知进程或删除服务端审计事实。
+
+**当前验证：** Recipe、历史与迁移纯逻辑 Node 回归覆盖往返、Session 引用、损坏面板隔离、重复模块、无效锁定上下文、重叠布局、格式/版本/大小拒绝、安全文件名、撤销/重做、分支清理、容量上限、Workspace 隔离、历史损坏恢复、跨 Workspace 来源不变性和同源/空源拒绝；前端 `tsc`、Vite production build 和完整 Wails production 构建通过。真实 Wails 窗口已验证导出下载并读取正确 JSON；原生文件选择载入 Recipe；无警告预览选择“取消”后原 3 面板布局保持不变；带损坏面板和无效锁定上下文的 Recipe 显示两项修复警告；确认后当前 Workspace 从 3 个面板替换为 2 个，关闭并重启 Desktop 后仍保持导入结果。布局历史另经真实窗口验证：2 面板恢复模板到 3 面板后按钮撤销回 2；`Ctrl+Shift+Z` 重做回 3；Desktop 重启后 `Ctrl+Z` 仍可撤销回 2。跨 Workspace 复制经真实窗口验证：日常协作 2 面板覆盖安全测试 5 面板，预览提示正确，确认后自动切换，目标撤销恢复原 5 面板。
+
+## UX-BL-006：面板最大化按钮
+
+**实现状态：** 已修复（2026-10-31）。根因是运行时 `normalizeLayout()` 把刚设置的最大化状态立即折叠；现已分开运行时保留最大化与持久化恢复折叠状态。
+
+**验证证据：** 前端 Node 回归测试覆盖运行时保留、持久化折叠和损坏状态清理；真实 Wails 窗口验证 Terminal 与 Agent Session 均可最大化/还原。Terminal 最大化后 Core PTY 从 `5×54` resize 为 `27×174`，还原后恢复 `5×54`；最大化状态重启后按普通布局恢复。
+
+**触发时机：** 下一次处理 Canvas 布局、面板宿主或 Wails 窗口输入时优先复现。
+
+**验收要点**
+
+- 鼠标与键盘分别触发最大化/还原，布局和持久化状态一致。
+- Terminal 最大化后 FitAddon 重新计算 rows/cols，并向 Core PTY 发送 resize。
+- 最大化/还原不影响其他面板任务、审批或终端桥生命周期。

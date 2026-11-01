@@ -328,7 +328,7 @@ Harness 文档不能单方面规定 Core 内部实现，也不能把 Core 未承
 - Runtime 的具体语言、进程模型、打包和部署形态。
 - MCP SDK/实现、事件模型、控制 API 和持久化格式。
 - Terminal Workspace 的终端数据路径及远程部署方式。
-- 模型适配、Agent Loop 和上下文压缩的首版范围。
+- 首个模型适配与有界 Agent Loop 已落地为 OpenAI-compatible 非流式切片；真实 provider 兼容、流式输出、摘要和跨重启上下文仍未确认。
 - 插件 Manifest、RPC/SDK、签名、沙箱和商城技术。
 - 正式平台、发布矩阵、更新和回滚方案。
 - 测试框架、性能阈值和契约快照格式。

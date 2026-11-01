@@ -1,6 +1,6 @@
 # Harness 工具调用与审批状态机 v1（草案）
 
-> 状态：代码与本地测试已覆盖；工具调用已通过 `internal/toolpipeline` 接入 MCP，远端 `review_pending` 已映射为 `approval_pending`，并支持 trusted/unknown/conflict 审批关联；安全审批决定、Core 结构化执行结果解析、Step 完成级别、自动消费和后续步骤恢复已接入 Runtime；未承诺公开兼容性。
+> 状态：代码与本地测试已覆盖；工具调用已通过 `internal/toolpipeline` 接入 MCP，远端 `review_pending` 已映射为 `approval_pending`，并支持 trusted/unknown/conflict 审批关联；安全审批决定、Core 结构化执行结果解析、Step 完成级别、自动消费、后续步骤恢复和可选审批历史持久化已接入 Runtime；未承诺公开兼容性。
 >
 > 日期：2026-10-30
 >
@@ -134,13 +134,19 @@ Harness 只把显式 `execution` 与该审批关联；不能从终端文本、�
 - Core 的 `TERM/1 202 Accepted` + `Submitted for review:` 或结构化 `review_pending=true, approved=false` 会收敛为 `approval_pending`，不会记为 `succeeded`。该映射只证明本地不伪造执行成功，不代表 Runtime 已能管理审批决定。
 - 当前 Termcp 0.2.8 开发基线在 review 结果中提供 `approval_id`，并可附带 `session_id` 和 `expires_at`。Harness 只使用显式字段；字段缺失或冲突时保持关联未知，不使用版本号推断能力。
 - `internal/approval` 的协调器只登记 `trusted` 关联，按 revision 串行提交决定，并在远端超时、断连或矛盾结果时收敛为 `unknown`；收到可信远端终态后才进入 `approved`、`rejected`、`expired` 或 `cancelled`。
+- 配置 `--approval-store-file` 后，协调器原子保存可信关联、决定 revision 和最后已知 Execution。重启时 `pending` / `submitting` fail-closed 收敛为 `unknown`，不恢复为可决定请求。
+- 审批历史恢复不调用 Core、不自动 Reconciliation、不通知 Session；已批准记录只能通过显式只读 Execution 刷新收敛，不能重放批准或工具调用。
+- `unknown` 审批可通过受保护的 `POST /v1/approvals/{id}/reconcile` 执行一次只读 Lookup；Core 仍为 `pending` 时保持 `unknown`，只有可信远端终态才推进本地状态。
+- 审批历史持久化失败不得触发远端决定；远端决定已经确认时保留该结果并显式报告本地历史未持久化。
 - `internal/coreapproval` 只通过 Core 公开 HTTP 契约调用 `/api/approvals/{id}/approve|reject`，解析决定响应中的结构化 `execution`，不读取 Core 内部数据；错误响应不会把凭据或审批正文写入普通日志。
 - Control API 暴露只读 `/v1/approvals` 快照；受保护的 `POST /v1/approvals/{id}/decision` 仅在显式配置 Bearer token 文件时启用，要求 JSON、revision CAS，并拒绝带 `Origin` 的请求。
+- 受保护的 `POST /v1/approvals/{id}/execution/refresh` 只读取已批准请求的 Core Execution，不重提决定或工具调用；成功读取会通知 Session，使 `waiting_execution` 能从已有可信证据恢复。读取失败保留原审批与工具状态。
 - 决定提交返回 `unknown` 时使用 HTTP `202`，不得把它显示为已批准、已拒绝或明确失败。
 - opt-in 真实 Core 测试已覆盖 review 挂起不执行、提交侧 MCP Host 断开后请求仍可批准、拒绝不执行、批准后执行、并发批准/拒绝首个决定生效，以及 session 关闭后批准被拒绝且不产生文件。
 - 已观测到 Core 0.2.8 的审批契约偏差：没有 waiter 的过期请求仍可被批准并执行；session 关闭后 pending 请求从 `/api/approvals` 消失，`cancelled` 状态不可查询。安全结果仍为拒绝执行，但状态可见性不符合公开文档。
 - 调用上下文取消只形成本地 `unknown`；真实 Core 的远端命令可能继续执行并完成副作用。取消不得被解释为远端已停止或未执行。
 - 20,000 行输出与 12 路并发只读调用已通过真实 Core 测试；并发事件的全局 sequence 可以交错，但同一 call ID 的内部顺序仍为 `proposed → ready → dispatching → terminal`。
+- 模型 Agent Loop 只产生工具调用提议；每个提议仍进入同一验证、策略、派发、观察和收敛链。模型不能直接调用 MCP Host，工具结果是否回填模型上下文由精确规则的 `model_result` 单独控制。
 
 ## 6. 未验证项
 

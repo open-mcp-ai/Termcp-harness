@@ -154,18 +154,25 @@ Activity 面板统一承载：
 - 轻量 Shell：Workspace 切换、模块抽屉、命令入口、全局状态和窗口控制。
 - 四个 Workspace 模板及自定义模板。
 - 12 列停靠网格中的面板拖动、缩放、最大化、关闭和键盘移动。
+- 12 行网格按窗口剩余高度自适应填充；Workspace 不出现整页纵向滚动条，内容溢出只在面板内部滚动。
+- 面板拖动使用 `requestAnimationFrame` 帧节流和 Canvas 内部临时布局；拖动期间不持续更新全局 Canvas 状态或写入 `localStorage`，松手后才提交。面板内容按模块上下文的引用比较跳过无意义重绘。
 - 拖到面板标题合并为标签组、拖到边缘分栏及落点预览。
 - 标签切换和关闭单个标签；关闭最后一个标签才移除面板容器。
 - 面板关闭后的重建与模板恢复。
 - 本机布局与选中 Session 持久化；Canvas 状态使用 schema v2，并兼容旧布局读取。
+- 当前 Workspace 可导出为 Recipe v1 JSON，并通过校验预览后导入；导入字段使用白名单，损坏单面板隔离，未知模块、无效上下文、重复模块、越界几何和重叠布局分别处理，失败或取消不会覆盖现有布局。
+- 真实 Wails 窗口已验证下载、原生文件选择、无警告预览、取消保留布局、带修复警告预览、确认替换和 Desktop 重启后的导入布局持久化。
+- 每个 Workspace 提供最多 20 步布局与 Session 引用撤销/重做；按钮和快捷键共用同一历史，状态使用独立 versioned localStorage 持久化。真实 Wails 窗口已验证鼠标撤销、键盘重做和重启后继续撤销。
+- 跨 Workspace 采用复制而非移动：预览目标覆盖范围，确认后切换目标视图，只复制布局与 Session 引用；目标原布局写入其独立撤销历史。真实 Wails 窗口已验证 2 面板覆盖 5 面板后可撤销恢复。
 - Agent、审批、Terminal 和 Activity 面板支持跟随当前 Session、锁定 Session 与关联未知状态；标签合并保留各模块上下文。
 - 关闭面板时明确提示任务和审批未停止，Workspace 持续显示后台活动任务数量。
 - 审批提交、服务端确认和结果未知分开表达；Activity 显示 subject/correlation，不以缺失关联推断当前任务。
 - Sessions、Agent Session、Approval、Terminal 占位、MCP、Activity 和 Diagnostics 面板。
+- Terminal 仅在绑定可信 running Shell 后显示真实 xterm；无 Shell 时显示明确空态，不再渲染伪造 `$` 提示符。
 - 面板、模块和任务生命周期分离的界面文案与恢复边界。
 
 尚未实现：
 
-- Workspace 导入导出、撤销历史和版本迁移。
+- Recipe 跨版本迁移和跨 Workspace 移动语义。
 - 真实 Terminal WebSocket 字节流。
 - 第三方模块贡献协议与动态面板注册。

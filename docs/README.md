@@ -36,7 +36,9 @@ docs/
 │       ├── desktop-shell.md
 │       ├── event-log.md
 │       ├── mcp-server-states.md
-│       └── state-machines.md
+│       ├── model-adapter.md
+│       ├── state-machines.md
+│       └── terminal-bridge.md
 └── adr/
     ├── ADR-001-input-control-ownership.md
     ├── ADR-002-event-ordering-correlation.md
@@ -50,7 +52,14 @@ docs/
     ├── ADR-010-core-integration-boundary.md
     ├── ADR-011-mcp-native-agent-runtime.md
     ├── ADR-012-runtime-bootstrap-technology.md
-    └── ADR-013-harness-canvas-layout.md
+    ├── ADR-013-harness-canvas-layout.md
+    ├── ADR-014-core-terminal-transport.md
+    ├── ADR-015-realtime-event-stream.md
+    ├── ADR-016-mcp-supervised-lifecycle.md
+    ├── ADR-017-model-adapter-agent-loop.md
+    ├── ADR-018-agent-session-persistence.md
+    ├── ADR-019-event-journal-persistence.md
+    └── ADR-020-approval-history-persistence.md
 ```
 
 ## 阅读顺序
@@ -69,12 +78,21 @@ docs/
 12. `docs/contracts/README.md`
 13. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
 14. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
-15. `docs/contracts/harness/v0.1/agent-session.md`（确定性 Agent Session 状态与当前边界）
+15. `docs/contracts/harness/v0.1/agent-session.md`（确定性 Session 与模型 Loop 状态）
 16. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
 17. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
 18. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
 19. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
 20. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
+21. `docs/contracts/harness/v0.1/terminal-bridge.md`（固定 Terminal 桥、状态与已知边界）
+22. `docs/adr/ADR-014-core-terminal-transport.md`（当前终端数据路径 PoC）
+23. `docs/adr/ADR-015-realtime-event-stream.md`（实时事件流与 Desktop 协调）
+24. `docs/adr/ADR-016-mcp-supervised-lifecycle.md`（MCP 健康、重连与凭据引用）
+25. `docs/contracts/harness/v0.1/model-adapter.md`（模型 Adapter、上下文投影与工具回填）
+26. `docs/adr/ADR-017-model-adapter-agent-loop.md`（模型 Loop 安全边界与当前验证）
+27. `docs/adr/ADR-018-agent-session-persistence.md`（Session 与模型 transcript 持久化边界）
+28. `docs/adr/ADR-019-event-journal-persistence.md`（事件窗口、sequence 与重启恢复边界）
+29. `docs/adr/ADR-020-approval-history-persistence.md`（审批历史、fail-closed 恢复与执行元数据边界）
 
 ## 文档职责
 

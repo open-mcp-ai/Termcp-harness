@@ -177,6 +177,14 @@ Harness 不规定唯一的规划范式。模型选择、提示策略、子 Agent
 
 Session 必须记录足以重建模型可见上下文的事件。若实现使用压缩、投影或摘要，必须保证原始事实、摘要来源和不可重建部分可区分。
 
+### 4.4 首个模型 Loop 边界
+
+- `internal/model` 只定义 completion Adapter；首个实现使用 OpenAI-compatible 非流式 Chat Completions，endpoint、模型 ID、凭据引用和预算显式配置。
+- `internal/agentsession` 维护有界循环、完整 assistant/tool 轮次投影、工具回填和预算。模型正文、工具参数与结果正文不写普通事件。
+- 模型可见工具必须同时来自显式 Harness 绑定、精确 allowlist 和当前已加载 MCP Schema；模型不能扩权、直接调用 MCP Host、修改策略或提交审批。
+- 审批、执行结果和 `waiting_execution` 恢复继续使用既有状态机；模型 Loop 不因超时、断连或 `unknown` 自动重放有副作用的工具调用。
+- 首批验证使用脚本化 Adapter、本地 HTTP 桩和 DashScope OpenAI-compatible 真实模型；已通过 Control API → Harness MCP Host → Core 只读 `term` → 模型完成的两轮闭环。其他 provider、流式响应和成本/质量评估尚未验证。
+
 ## 5. MCP Client / Host 边界
 
 ### 5.1 基本职责
@@ -214,7 +222,7 @@ Termcp Core 是其中一个 MCP Server，不是唯一的工具来源。Harness �
 - 连接成功不等于调用成功。
 - 没有执行证据时不得显示“已加载成功”或“运行正常”。
 
-当前本地 Host 已把真实 Streamable HTTP 连接、能力读取、启用/停用、断连和 `tools/list_changed` 失效接入 Runtime，并保持登记、连接、能力、启用和所有权分开建模，见 `docs/contracts/harness/v0.1/mcp-server-states.md`。认证、自动重连、SSE/stdio 和受管子进程仍未实现。
+当前本地 Host 已把 Streamable HTTP、SSE、stdio 连接、能力读取、启用/停用、断连和 `tools/list_changed` 失效接入 Runtime，并保持登记、连接、能力、启用、传输和所有权分开建模。Host supervisor 执行周期健康 Ping、1–30 秒退避重连、能力重载和启用偏好恢复；Bearer Token 只通过受限文件引用，同 origin Core 才复用。stdio 只接受启动时显式命令配置，子进程由 MCP transport 持有和回收。见 `docs/contracts/harness/v0.1/mcp-server-states.md`。
 
 ### 5.3 工具命名与隔离
 
@@ -259,7 +267,7 @@ Termcp Core 是其中一个 MCP Server，不是唯一的工具来源。Harness �
 
 这些状态是否可被可信确认，最终取决于 Core/MCP 契约。客户端和 Runtime 不得用自己的本地状态伪造服务端终态。
 
-当前本地状态机已通过 `internal/toolpipeline` 接入 MCP Host，支持显式 Server/工具/精确参数 allowlist、参数与结果上限、控制事件轨迹和同步调用收敛。成功、工具级失败、传输结果未知、真实 Core 的幂等覆盖写入、副作用超时未知和调用侧 MCP Host 断开后的 `unknown` 已由测试覆盖。调用取消同样只形成本地 `unknown`，远端命令可能继续；20,000 行输出和 12 路并发只读调用已通过真实 Core 测试。远端 `review_pending` 现已映射为 `approval_pending`，审批决定、结构化执行结果、Step 完成级别和后续步骤自动恢复已接入 Runtime。当前 Termcp 0.2.8 开发基线已完成审批过期和 session 关闭后取消状态修复及严格契约验证，后续 Termcp 迭代继续沿用同一测试链。该测试不证明远端 idempotency key、真实网络分区或可信未执行查询。Agent Loop、持久化 Session 和跨重启恢复仍未接入，不得由本地时间或终端文本伪造。边界见 `docs/contracts/harness/v0.1/state-machines.md`。
+当前本地状态机已通过 `internal/toolpipeline` 接入 MCP Host，支持显式 Server/工具/精确参数 allowlist、参数与结果上限、控制事件轨迹和同步调用收敛。成功、工具级失败、传输结果未知、真实 Core 的幂等覆盖写入、副作用超时未知和调用侧 MCP Host 断开后的 `unknown` 已由测试覆盖。调用取消同样只形成本地 `unknown`，远端命令可能继续；20,000 行输出和 12 路并发只读调用已通过真实 Core 测试。远端 `review_pending` 现已映射为 `approval_pending`，审批决定、结构化执行结果、Step 完成级别和后续步骤自动恢复已接入 Runtime。显式配置 `--approval-store-file` 时，协调器可恢复已确认审批历史和最后已知 Execution；重启时 `pending` / `submitting` fail-closed 为 `unknown`，且恢复过程不调用 Core、不自动 Reconciliation、不通知 Session。恢复后的 `unknown` 审批可由用户显式触发一次只读 Core Lookup；远端仍为 `pending` 时保持未知，只有可信终态才更新本地历史。模型边界通过 `internal/model` 的 OpenAI-compatible 非流式 Adapter 和 `internal/agentsession` 的有界 Loop 接入：模型只能看到精确 allowlist 与当前 MCP Schema 投影出的工具，工具调用仍进入同一验证、策略、审批和事件流水线。Session Store v2 同时保存活动 Loop checkpoint 阶段、预算、工具描述/Schema/参数指纹和待执行 call 摘要，但 checkpoint 不复制工具参数正文；重启仍 fail-closed。只有 `model_requesting` 和 `tools_ready` 可由 Bearer 保护的显式入口人工领取，领取前必须用当前工具目录身份与 hash 以及持久化 transcript 中的 call/参数 hash 复验；同一 Session 只允许一次领取，任何偏差保持 `unknown`。工具派发中、审批或执行未确认仍阻塞，自动恢复未实现。当前 Termcp 0.2.8 开发基线已完成审批过期和 session 关闭后取消状态修复及严格契约验证，后续 Termcp 迭代继续沿用同一测试链。该测试不证明远端 idempotency key、真实网络分区或可信未执行查询；其他模型 provider、Session/事件/审批跨文件原子恢复仍不得由本地时间或终端文本伪造。边界见 `docs/contracts/harness/v0.1/state-machines.md`、`docs/contracts/harness/v0.1/agent-session.md` 和 `docs/contracts/harness/v0.1/model-adapter.md`。
 
 ### 6.3 重试规则
 
@@ -336,7 +344,7 @@ Harness 的策略不能替代 Core 的服务端权限。UI 点击、按钮禁用
 - 保护凭据和敏感终端内容。
 - 不因 UI 重渲染或崩溃而丢失已提交事实。
 
-当前本地事件日志只提供内存内补拉窗口，顺序、容量和截断语义见 `docs/contracts/harness/v0.1/event-log.md`。持久化、实时订阅和跨重启恢复仍未实现。
+当前本地事件日志提供内存内补拉窗口和 `/v1/events/stream` SSE。Desktop 通过固定 Go 桥维持 cursor、重连和有界 2048 条未消费事件；事件立即进入 Activity，并在 120 ms 合并后刷新权威快照，保留 15 秒兜底轮询。显式配置 `--event-log-file` 时，Runtime 使用原子文件替换持久化当前有界保留窗口、sequence、诊断丢弃水位和 overflow；持久化失败会回滚本次内存追加。Desktop 将最后消费的 cursor 按 endpoint 与 Runtime instance ID 保存于本机 localStorage，同一实例重启 Desktop 可继续补拉，实例变化或 cursor 超出最新序号时安全重置到最新快照；这不等于恢复审批队列、MCP 连接或活动 Agent Loop。顺序、容量、lag、截断和恢复语义见 `docs/contracts/harness/v0.1/event-log.md` 与 `ADR-019`。
 
 ### 8.3 上下文管理
 
@@ -358,7 +366,7 @@ Terminal Workspace 的初版界面方向采用 `docs/adr/ADR-013-harness-canvas-
 - Activity 统一入口并保留实时事件、历史记录和诊断视图。
 - 面板、模块和任务生命周期必须分开。
 
-该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；面板标签合并与边缘分栏已验证，相关面板已支持跟随/锁定 Session、显式关联未知、关闭视图提示和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。Workspace 导入导出、真实 Terminal 实时订阅、跨 Workspace 迁移和第三方模块贡献仍未完成。
+该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；面板标签合并与边缘分栏已验证，相关面板已支持跟随/锁定 Session、显式关联未知、关闭视图提示和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。Workspace Recipe v1 支持当前 Workspace 的导出、校验预览和确认替换；导入只接受已知模块与字段，隔离损坏面板、清理无效上下文、拒绝重叠布局，并在失败或取消时保留原布局。每个 Workspace 另有最多 20 步的布局/Session 引用撤销与重做历史，通过独立 versioned localStorage 持久化，支持按钮与快捷键，重启后仍可撤销；文本输入框保留原生撤销。跨 Workspace 复制复用 Recipe 字段白名单，只复制布局与 Session 引用，预览目标覆盖范围后切换目标视图，并把目标原布局写入目标自己的撤销历史。固定 Wails Go Terminal 桥已接入真实 Core：xterm、历史尾部、WebSocket 输出、人工输入、resize 和 `shell_activity` 已实现；原子历史/实时切换和第三方模块贡献仍未完成。
 
 ### 9.1 共享执行现场
 
@@ -371,11 +379,13 @@ Terminal Workspace 的目标不是“把 Agent 日志放在终端旁边”，而
 
 ### 9.2 终端传输路径
 
-以下方案仍需 PoC 决定：
+当前 PoC 采用固定 Desktop 桥直连回环 Core，详细决策见 `docs/adr/ADR-014-core-terminal-transport.md`。仍需窗口级性能数据决定是否转为正式 Accepted：
 
 - Terminal Workspace 直接连接 Core 的终端 WebSocket，Harness 只观察控制事件。
 - Terminal Workspace 通过 Harness 转发终端字节和控制事件。
 - 混合方式：控制经 Harness，终端数据直连 Core。
+
+现实现不向 React 暴露 Core URL 或通用连接能力；Go 进程验证 Agent Session、Core Session 和 Shell 归属。Core `watch_add` 没有确认且只订阅注册后的字节，历史读取与实时 watch 之间没有原子游标，见 `docs/contracts/harness/v0.1/terminal-bridge.md`。
 
 选择时必须评估：
 
