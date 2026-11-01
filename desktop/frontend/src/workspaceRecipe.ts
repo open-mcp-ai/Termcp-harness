@@ -132,7 +132,7 @@ export function parseWorkspaceRecipe(text: string): WorkspaceRecipeParseResult {
     throw new WorkspaceRecipeError("empty_layout", "Workspace Recipe 没有可用面板。");
   }
   if (normalized.length < panels.length) {
-    warnings.push("重复占用的模块已从布局中移除。");
+    warnings.push("重复占用的面板类型已从布局中移除。");
   }
   if (layoutHasOverlap(normalized)) {
     throw new WorkspaceRecipeError(
@@ -201,11 +201,11 @@ function sanitizePanel(
     : [];
   const moduleId = isModuleId(value.moduleId) ? value.moduleId : tabs[0];
   if (!moduleId) {
-    warnings.push(`第 ${index + 1} 个面板的模块类型无效，已跳过。`);
+    warnings.push(`第 ${index + 1} 个面板的类型无效，已跳过。`);
     return null;
   }
   if (Array.isArray(value.tabs) && value.tabs.some((tab) => !isModuleId(tab))) {
-    warnings.push(`第 ${index + 1} 个面板包含未知模块，已忽略对应标签。`);
+    warnings.push(`第 ${index + 1} 个面板包含未知类型，已忽略对应标签。`);
   }
 
   const definition = moduleDefinition(moduleId);

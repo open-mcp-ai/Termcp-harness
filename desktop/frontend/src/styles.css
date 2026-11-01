@@ -1490,6 +1490,11 @@ h1 {
   background: var(--canvas-success);
 }
 
+.status-dot.neutral {
+  background: var(--canvas-muted);
+  box-shadow: none;
+}
+
 .status-dot.warning {
   background: var(--canvas-warning);
   box-shadow: 0 0 8px rgba(210, 153, 63, 0.5);
@@ -3129,6 +3134,23 @@ h1 {
   background: transparent;
   border: 0;
   cursor: pointer;
+}
+
+.canvas-persistence-problem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 11px;
+  color: #8a3529;
+  background: #fff3ef;
+  border: 1px solid #ebc7bd;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.canvas-persistence-problem strong {
+  flex: none;
 }
 
 .recipe-review-backdrop {

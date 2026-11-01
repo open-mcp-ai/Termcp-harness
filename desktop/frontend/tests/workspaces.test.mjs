@@ -92,7 +92,7 @@ test("persists independent layouts and undo history for generated Spaces", () =>
   const spaces = [...catalog.spaces, created];
 
   try {
-    writeStoredCanvasState({
+    assert.equal(writeStoredCanvasState({
       version: 2,
       layouts: {
         daily: normalizeLayout(defaultWorkspaceLayout("daily")),
@@ -105,7 +105,7 @@ test("persists independent layouts and undo history for generated Spaces", () =>
       selectedSessionByWorkspace: {
         [created.id]: "session-custom",
       },
-    }, spaces);
+    }, spaces), true);
     const restoredCanvas = readStoredCanvasState(spaces);
     assert.equal(restoredCanvas.layouts[created.id].length, 1);
     assert.equal(restoredCanvas.selectedSessionByWorkspace[created.id], "session-custom");
@@ -121,6 +121,31 @@ test("persists independent layouts and undo history for generated Spaces", () =>
   } finally {
     globalThis.localStorage = previousLocalStorage;
   }
+});
+
+test("reports layout persistence failure instead of claiming success", () => {
+  const catalog = defaultWorkspaceCatalog();
+  const state = {
+    version: 2,
+    layouts: {
+      daily: normalizeLayout(defaultWorkspaceLayout("daily")),
+      security: normalizeLayout(defaultWorkspaceLayout("security")),
+      mcp: normalizeLayout(defaultWorkspaceLayout("mcp")),
+      diagnostics: normalizeLayout(defaultWorkspaceLayout("diagnostics")),
+      custom: normalizeLayout(defaultWorkspaceLayout("custom")),
+    },
+    selectedSessionByWorkspace: {},
+  };
+  const failingStorage = {
+    getItem() {
+      return null;
+    },
+    setItem() {
+      throw new Error("storage disabled");
+    },
+  };
+
+  assert.equal(writeStoredCanvasState(state, catalog.spaces, failingStorage), false);
 });
 
 test("rejects duplicate persisted personal Space IDs and caps malformed input", () => {

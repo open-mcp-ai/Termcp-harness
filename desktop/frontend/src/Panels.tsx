@@ -40,6 +40,7 @@ import {
   validModelBudgets,
   visibleModelResult,
 } from "./modelLoop";
+import { summarizeAgentSessionStates } from "./sessionSummary";
 import type {
   AgentSessionSnapshot,
   AgentSessionTranscript,
@@ -353,18 +354,23 @@ function SessionsPanelView({
   stale: boolean;
 }) {
   const sessions = data.agent_sessions.sessions;
-  const counts = {
-    running: sessions.filter((session) => session.state === "running" || session.state === "cancelling").length,
-    waiting: sessions.filter((session) => session.state === "waiting_approval" || session.state === "waiting_execution").length,
-    failed: sessions.filter((session) => ["failed", "blocked", "expired", "unknown"].includes(session.state)).length,
-  };
+  const counts = summarizeAgentSessionStates(sessions.map((session) => session.state));
   return (
     <div className="canvas-module sessions-module">
       {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
       <div className="canvas-summary-row">
-        <span><i className="status-dot ready" />运行中 <strong>{counts.running}</strong></span>
-        <span><i className="status-dot warning" />待处理 <strong>{counts.waiting}</strong></span>
-        <span><i className="status-dot danger" />异常 <strong>{counts.failed}</strong></span>
+        <span title="包含运行中和正在停止的 Session">
+          <i className="status-dot ready" />运行/停止 <strong>{counts.active}</strong>
+        </span>
+        <span title="包含等待审批和等待执行结果的 Session">
+          <i className="status-dot warning" />等待审批/执行 <strong>{counts.waiting}</strong>
+        </span>
+        <span title="包含失败、已阻断和已过期的 Session">
+          <i className="status-dot danger" />失败/阻断/过期 <strong>{counts.abnormal}</strong>
+        </span>
+        <span title="结果无法确认，既不是失败也不是已执行">
+          <i className="status-dot neutral" />结果未知 <strong>{counts.unknown}</strong>
+        </span>
       </div>
       {sessions.length === 0 ? (
         <p className="canvas-empty">{messages.agent.emptyBody}</p>

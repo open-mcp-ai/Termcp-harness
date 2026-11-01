@@ -16,6 +16,7 @@ import {
   windowAction,
 } from "./api";
 import CanvasGrid from "./CanvasGrid";
+import { mcpStatusSummary } from "./connectionStatus";
 import {
   CANVAS_COLUMNS,
   CANVAS_GAP,
@@ -98,6 +99,7 @@ const eventStreamCopy: Record<EventStreamState, string> = {
   stopped: "已停止",
 };
 const WORKSPACE_STORAGE_KEY = "termcp.canvas.workspace";
+type PersistenceState = "checking" | "saved" | "failed";
 
 function WindowControls() {
   if (!desktopAvailable()) return null;
@@ -111,7 +113,12 @@ function WindowControls() {
 }
 
 function initialWorkspace(spaces: WorkspaceRecord[]): WorkspaceId {
-  const stored = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+  } catch {
+    // Fall back to the first personal Space when local storage is unavailable.
+  }
   return spaces.some((space) => space.id === stored)
     ? stored as WorkspaceId
     : spaces.find((space) => space.kind === "personal")?.id ?? "security";
@@ -160,6 +167,7 @@ export default function App() {
   const [workspaceHistory, setWorkspaceHistory] = useState(
     () => readStoredWorkspaceHistory(localStorage, workspaceCatalog.spaces),
   );
+  const [persistenceState, setPersistenceState] = useState<PersistenceState>("checking");
   const inFlight = useRef(false);
   const runtimeInstance = useRef("");
   const eventCursor = useRef(0);
@@ -344,20 +352,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(WORKSPACE_STORAGE_KEY, workspace);
-  }, [workspace]);
-
-  useEffect(() => {
-    writeStoredWorkspaceCatalog(localStorage, workspaceCatalog);
-  }, [workspaceCatalog]);
-
-  useEffect(() => {
-    writeStoredCanvasState(canvasState, workspaceCatalog.spaces);
-  }, [canvasState, workspaceCatalog.spaces]);
-
-  useEffect(() => {
-    writeStoredWorkspaceHistory(localStorage, workspaceHistory, workspaceCatalog.spaces);
-  }, [workspaceCatalog.spaces, workspaceHistory]);
+    let selectedSpaceSaved = true;
+    try {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, workspace);
+    } catch {
+      selectedSpaceSaved = false;
+    }
+    const catalogSaved = writeStoredWorkspaceCatalog(localStorage, workspaceCatalog);
+    const canvasSaved = writeStoredCanvasState(canvasState, workspaceCatalog.spaces);
+    const historySaved = writeStoredWorkspaceHistory(
+      localStorage,
+      workspaceHistory,
+      workspaceCatalog.spaces,
+    );
+    setPersistenceState(
+      selectedSpaceSaved && catalogSaved && canvasSaved && historySaved ? "saved" : "failed",
+    );
+  }, [canvasState, workspace, workspaceCatalog, workspaceHistory]);
 
   useEffect(() => {
     if (lifecycleNotice === null) return;
@@ -550,7 +561,7 @@ export default function App() {
     setLifecycleNotice(
       moduleId === "approvals"
         ? "已关闭审批视图；审批请求不会被拒绝、取消或停止。"
-        : "已关闭面板视图；不会停止关联任务或卸载模块。",
+        : "已关闭面板视图；不会停止关联任务。",
     );
     if (tabs.length === 0) {
       updatePanels(panels.filter((candidate) => candidate.id !== panelId));
@@ -586,7 +597,7 @@ export default function App() {
 
   const addModule = useCallback((moduleId: ModuleId) => {
     if (panels.some((panel) => panelContains(panel, moduleId))) {
-      setDrawerMessage("该模块已经在当前工作区中。");
+      setDrawerMessage("该面板已经在当前工作区中。");
       return;
     }
     const slot = findFreeSlot(panels, moduleId);
@@ -883,21 +894,21 @@ export default function App() {
         id: "command:restore",
         kind: "command" as const,
         label: "恢复场景模板",
-        description: "用当前场景的推荐模块恢复布局。",
+        description: "用当前场景的推荐面板恢复布局。",
         run: resetLayout,
       },
       {
         id: "command:modules",
         kind: "command" as const,
-        label: "打开模块目录",
-        description: "只浏览和添加 Workspace 模块。",
+        label: "打开面板目录",
+        description: "只浏览和添加 Workspace 面板。",
         run: openModuleDrawer,
       },
     ];
     const modules = moduleDefinitions.map((module) => ({
       id: `module:${module.id}`,
       kind: "module" as const,
-      label: `添加模块：${module.title}`,
+      label: `添加面板：${module.title}`,
       description: module.description,
       run: () => addModule(module.id),
     }));
@@ -1050,7 +1061,7 @@ export default function App() {
   const runtimeLabel = runtimeState === "unknown" ? messages.state.unknown : stateCopy[runtimeState];
   const coreState = data?.core.core?.state ?? "unavailable";
   const coreLabel = data?.core.core ? data.core.core.state : messages.core.unconfigured;
-  const mcpText = data ? `MCP Servers ${data.mcp.ready}/${data.mcp.total}` : "MCP Servers —";
+  const mcpStatus = mcpStatusSummary(data?.mcp);
 
   return (
     <div className="canvas-shell">
@@ -1074,7 +1085,7 @@ export default function App() {
         />
 
         <div className="canvas-top-actions no-drag">
-          <button type="button" className="canvas-primary-action" onClick={openModuleDrawer}>+ 添加模块</button>
+          <button type="button" className="canvas-primary-action" onClick={openModuleDrawer}>+ 添加面板</button>
           <button
             type="button"
             className="canvas-command-button"
@@ -1088,7 +1099,7 @@ export default function App() {
         <div className={`canvas-status-cluster state-${runtimeState}`} aria-live="polite">
           <span><i className="status-dot" />Runtime {runtimeLabel}</span>
           <span><i className={`status-dot ${coreState === "identified" ? "ready" : "warning"}`} />Core {coreLabel}</span>
-          <span><i className={`status-dot ${data && data.mcp.ready === data.mcp.total ? "ready" : "warning"}`} />{mcpText}</span>
+          <span><i className={`status-dot ${mcpStatus.tone}`} />{mcpStatus.label}</span>
         </div>
 
         <WindowControls />
@@ -1098,7 +1109,7 @@ export default function App() {
         <div className="canvas-toolbar">
           <div>
             <strong>{workspaceName}</strong>
-            <span>{panels.length} 个模块 · {lastChecked ? `更新于 ${lastChecked.toLocaleTimeString(messages.locale, { hour12: false })}` : "等待连接"}</span>
+            <span>{panels.length} 个面板 · {lastChecked ? `更新于 ${lastChecked.toLocaleTimeString(messages.locale, { hour12: false })}` : "等待连接"}</span>
             <span className={`canvas-task-summary ${activeTaskCount ? "has-active" : ""}`}>
               <i className="status-dot" />
               {activeTaskCount
@@ -1188,6 +1199,13 @@ export default function App() {
           </div>
         ) : null}
 
+        {persistenceState === "failed" ? (
+          <div className="canvas-persistence-problem" role="alert">
+            <strong>本地保存失败</strong>
+            <span>当前修改仍可使用，但关闭 Desktop 后可能丢失。请检查本机存储权限或可用空间。</span>
+          </div>
+        ) : null}
+
         {panels.length ? (
           <CanvasGrid
             panels={panels}
@@ -1199,10 +1217,10 @@ export default function App() {
           />
         ) : (
           <section className="canvas-empty-board">
-            <strong>当前 Workspace 没有模块</strong>
-            <p>从模块目录添加面板，或恢复当前场景模板。</p>
+            <strong>当前 Workspace 没有面板</strong>
+            <p>从面板目录添加视图，或恢复当前场景模板。</p>
             <div>
-              <button type="button" onClick={openModuleDrawer}>添加模块</button>
+              <button type="button" onClick={openModuleDrawer}>添加面板</button>
               <button type="button" onClick={resetLayout}>恢复模板</button>
             </div>
           </section>
@@ -1211,7 +1229,12 @@ export default function App() {
 
       <footer className="canvas-statusbar">
         <span>
-          布局自动保存在本机 · 面板关闭不会停止任务
+          {persistenceState === "checking"
+            ? "正在检查本机保存…"
+            : persistenceState === "failed"
+              ? "本地保存失败 · 修改可能仅保留在本次会话"
+              : "布局已保存在本机"}
+          {" · "}面板关闭不会停止任务
           {activeTaskCount ? ` · ${activeTaskCount} 个任务仍由 Runtime 管理` : ""}
         </span>
         <span title={eventStreamError ?? undefined}>
@@ -1251,10 +1274,10 @@ export default function App() {
                   firstMatchingEntry.run();
                 }
               }}
-              placeholder="搜索命令或模块…"
-              aria-label="搜索命令或模块"
+              placeholder="搜索命令或面板…"
+              aria-label="搜索命令或面板"
             />
-            <p className="command-palette-hint">这里搜索并执行操作；添加模块只浏览模块目录。</p>
+            <p className="command-palette-hint">这里搜索并执行操作；添加面板只浏览面板目录。</p>
             <div className="command-palette-results">
               {matchingEntries.length ? (
                 <>
@@ -1275,7 +1298,7 @@ export default function App() {
                     )) : <p className="canvas-empty">没有匹配命令</p>}
                   </section>
                   <section>
-                    <h3>模块</h3>
+                    <h3>面板</h3>
                     {matchingModules.length ? matchingModules.map((module) => (
                       <button
                         type="button"
@@ -1288,10 +1311,10 @@ export default function App() {
                         <strong>{module.label}</strong>
                         <small>{module.description}</small>
                       </button>
-                    )) : <p className="canvas-empty">没有匹配模块</p>}
+                    )) : <p className="canvas-empty">没有匹配面板</p>}
                   </section>
                 </>
-              ) : <p className="canvas-empty">没有匹配的命令或模块。</p>}
+              ) : <p className="canvas-empty">没有匹配的命令或面板。</p>}
             </div>
           </aside>
         </div>
@@ -1344,20 +1367,20 @@ export default function App() {
 
       {moduleDrawer ? (
         <div className="module-drawer-backdrop" role="presentation" onMouseDown={() => setModuleDrawer(false)}>
-          <aside className="module-drawer no-drag" aria-label="模块目录" onMouseDown={(event) => event.stopPropagation()}>
+          <aside className="module-drawer no-drag" aria-label="面板目录" onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <span>Workspace Modules</span>
-                <h2>添加模块</h2>
+                <span>Workspace Panels</span>
+                <h2>添加面板</h2>
               </div>
-              <button type="button" aria-label="关闭模块目录" onClick={() => setModuleDrawer(false)}>×</button>
+              <button type="button" aria-label="关闭面板目录" onClick={() => setModuleDrawer(false)}>×</button>
             </header>
             <input
               autoFocus
               value={moduleQuery}
               onChange={(event) => setModuleQuery(event.target.value)}
-              placeholder="搜索模块…"
-              aria-label="搜索模块"
+              placeholder="搜索面板…"
+              aria-label="搜索面板"
             />
             {drawerMessage ? <p className="canvas-warning">{drawerMessage}</p> : null}
             <div className="module-catalog">

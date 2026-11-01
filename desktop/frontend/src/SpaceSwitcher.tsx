@@ -160,7 +160,7 @@ export default function SpaceSwitcher({
         </span>
         <span className="space-switcher-current">
           <strong>{activeSpace?.name ?? "未知 Space"}</strong>
-          <small>{panelCounts[activeSpaceId] ?? 0} 个模块</small>
+          <small>{panelCounts[activeSpaceId] ?? 0} 个面板</small>
         </span>
         <span className={`space-switcher-chevron ${open ? "is-open" : ""}`} aria-hidden="true">⌄</span>
       </button>
@@ -212,7 +212,7 @@ export default function SpaceSwitcher({
                           <span className="space-list-mark" aria-hidden="true">{spaceInitial(space.name)}</span>
                           <span className="space-list-copy">
                             <strong>{space.name}</strong>
-                            <small>{panelCounts[space.id] ?? 0} 个模块 · {templateLabel(space.template)}</small>
+                            <small>{panelCounts[space.id] ?? 0} 个面板 · {templateLabel(space.template)}</small>
                           </span>
                           <span className="space-list-check" aria-hidden="true">{active ? "✓" : ""}</span>
                         </button>
@@ -272,7 +272,7 @@ export default function SpaceSwitcher({
                       >
                         <span className="space-list-copy">
                           <strong>{space.name}</strong>
-                          <small>{panelCounts[space.id] ?? 0} 个模块</small>
+                          <small>{panelCounts[space.id] ?? 0} 个面板</small>
                         </span>
                         <span aria-hidden="true">{active ? "当前" : "打开"}</span>
                       </button>
@@ -294,7 +294,7 @@ export default function SpaceSwitcher({
                 <h3>{editor === "create" ? "创建一个自己的 Space" : `重命名“${targetSpace?.name ?? ""}”`}</h3>
                 <p>
                   {editor === "create"
-                    ? "名称只影响导航；模块、布局和 Session 选择都独立保存。"
+                    ? "名称只影响导航；面板、布局和 Session 选择都独立保存。"
                     : "正在运行的任务、终端和审批不会因重命名而改变。"}
                 </p>
               </div>

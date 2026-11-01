@@ -166,7 +166,7 @@ export const workspaceTemplateOptions: WorkspaceTemplateOption[] = [
   {
     id: "blank",
     label: "空白 Space",
-    description: "从空画布开始，稍后按需添加模块。",
+    description: "从空画布开始，稍后按需添加面板。",
   },
   {
     id: "security",
@@ -706,7 +706,8 @@ export function readStoredCanvasState(
 export function writeStoredCanvasState(
   state: StoredCanvasState,
   spaces = defaultWorkspaceCatalog().spaces,
-): void {
+  storage: StorageLike = localStorage,
+): boolean {
   try {
     const normalized: StoredCanvasState = {
       version: CANVAS_STATE_VERSION,
@@ -724,9 +725,10 @@ export function writeStoredCanvasState(
         spaces,
       ),
     };
-    localStorage.setItem(CANVAS_STATE_KEY, JSON.stringify(normalized));
+    storage.setItem(CANVAS_STATE_KEY, JSON.stringify(normalized));
+    return true;
   } catch {
-    // Layout persistence is best-effort; runtime state must not depend on it.
+    return false;
   }
 }
 
