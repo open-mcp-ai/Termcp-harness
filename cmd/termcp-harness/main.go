@@ -33,7 +33,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
-var version = "v0.1.3"
+var version = "v0.1.4"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

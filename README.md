@@ -4,7 +4,7 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 
 它不是第二个 Core，也不是 Termcp-Desktop 的复制品。Core 是真实执行平面，Harness Runtime 是 Agent/工具控制平面，Terminal Workspace 是第一方体验平面。
 
-当前 `dev` 开发快照：`v0.1.3`。版本演进与验证记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前 `dev` 开发快照：`v0.1.4`。版本演进与验证记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 当前状态
 
@@ -31,7 +31,7 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 - Core 审批契约问题与上游同步状态统一记录在 `docs/contracts/core/v0.2.8/known-issues.md`；当前开发、集成和验收均以 Termcp 当前 `0.2.8` 版本基线的实际公开契约为准，不维护第二套 Harness 运行路径。
 - MCP Bearer 认证引用、健康检查、退避重连、能力刷新、`tools/list_changed` 自动恢复，以及 Streamable HTTP/SSE/stdio 和受管 stdio 子进程已实现。模型 Agent Loop 已有 headless 切片和 Desktop 任务启动台，并在真实 Wails 窗口验证最终回复、审批和 `waiting_execution` 恢复按钮；`--session-store-file` 已通过真实 Runtime 重启验证，可从本地文件恢复 Session、3 条模型消息和最终回复。Session Store v2 另持久化活动 Loop checkpoint 的阶段、预算、工具目录指纹和待执行 call 摘要，但不复制工具参数正文；重启仍 fail-closed 为 `unknown`，只有经当前工具目录指纹和 transcript 参数哈希校验的 `model_requesting` / `tools_ready` 可由用户显式恢复。`--event-log-file` 可独立恢复有界事件窗口和 sequence，`--approval-store-file` 可恢复审批历史但不会恢复可决定审批队列；Desktop cursor 可按 endpoint 与 Runtime 实例恢复，Runtime 实例变化时安全重置到最新窗口。自动恢复、审批队列和工具派发中继续仍未实现。受管 Core 已实现基础子进程启动与停止。控制 API 提供受保护的 Session 创建、确定性运行、模型 Loop、安全检查点恢复、转录读取和单项审批决定，不提供任意工具调用、模型配置或通用 HTTP 桥接；Desktop 可创建或人工恢复模型任务、观察 Session 并提交审批决定。
 - 多来源 MCP 可通过 `--mcp-config-file` 注册，每个来源独立 transport、凭据、enabled、健康和能力状态；非 Core stdio 工具已通过真实 Agent Session 调用闭环。
-- 当前没有 CI；Desktop 已接入 `@xterm/xterm` 和真实 Core Terminal PoC，但尚未完成认证、窗口级性能基线或安装包生成。
+- GitHub Actions 已覆盖 Runtime、前端和 Windows Wails 构建；Desktop 已接入 `@xterm/xterm` 和真实 Core Terminal PoC，但尚未完成认证、窗口级性能基线或安装包生成。
 - 本地工作区已初始化 Git，当前开发分支为 `dev`；`main` 未由本项目直接修改。
 - 产品定位已由 `docs/adr/ADR-011-mcp-native-agent-runtime.md` 确认。
 - 第一方 Terminal Workspace 技术方向暂定 Wails v2 + Go + React/TypeScript/Vite + `@xterm/xterm`。

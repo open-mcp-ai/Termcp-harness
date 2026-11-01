@@ -4,6 +4,36 @@ Termcp Harness 的重要功能与架构变更记录。
 
 当前版本在 `dev` 分支持续迭代，不承诺跨版本兼容。版本号采用语义化版本的基础形式，每次可独立验收的功能里程碑递增补丁号。
 
+## [v0.1.4] - 2026-11-02
+
+### Fixed
+
+- MCP 未配置或没有 Server 时显示中性灰，不再把 `0/0` 显示为绿色就绪。
+- 本机 Space 目录、当前 Space、Canvas 布局或撤销历史写入失败时显示明确警示，不再继续宣称“已自动保存”。
+- Session 汇总把 `unknown` 从“异常”中拆出；失败、阻断、过期与结果未知分别计数。
+- 重新加载 Desktop 代码后恢复完整前端依赖，并重新生成生产静态资源。
+
+### Changed
+
+- Desktop 中的“添加模块”和“模块目录”统一改为“添加面板”和“面板目录”，把“模块”留给未来的 Manifest、安装、启用和能力就绪生命周期。
+- Session 汇总显式写出包含状态：“运行/停止”“等待审批/执行”“失败/阻断/过期”“结果未知”。
+- 增加 GitHub Actions `Verify` 工作流，覆盖 Runtime、前端和 Windows Wails 构建。
+
+### Verification
+
+- `npm run check` 通过。
+- `npm test` 通过，共 43 项。
+- `npm run build` 通过。
+- `go test -race ./...`、`go vet ./...`、`go build ./...` 通过。
+- Wails Windows 可执行文件使用生产前端重新构建并成功启动。
+- 真实 Wails 自动视觉读取受 Computer Use/WebView2 调试通道限制，未冒充为完成；状态组件由类型检查、Node 回归和生产构建验证。
+
+### Known limitations
+
+- Wails 窗口中的三项目状态变更仍需人工目视或可用的 Windows UI 自动化复验。
+- WebView2 内存基线未因本切片重新测量。
+- Core v0.2.8 未关闭上游问题继续以 `docs/contracts/core/v0.2.8/known-issues.md` 为准。
+
 ## [v0.1.3] - 2026-11-01
 
 ### Added

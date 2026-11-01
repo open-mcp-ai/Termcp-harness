@@ -9,6 +9,8 @@
 > 推进记录（2026-10-31）：UX-BL-001 至 UX-BL-004 已提前完成前端切片；UX-BL-005 已实现 schema v2、旧布局读取兼容、Workspace Recipe v1 导入导出、单面板损坏隔离、有界撤销/重做、重启后布局恢复和跨 Workspace 布局复制，完整跨版本迁移与移动语义仍未实现。验证使用模拟 Desktop bridge 的浏览器交互回归、Wails production build，以及连接真实 Harness/Core 的 Wails Desktop 回归。真实 Desktop 已验证 Session 跟随/锁定、关联未知、后台任务计数、关闭面板不停止 Core Session，以及从批准按钮到服务端确认和远程文件回读的完整正向审批闭环。固定 Desktop Terminal 桥已通过真实 Core 集成测试，并在真实 Wails 窗口验证人工输入/输出、关闭视图后 Shell 保持、重开历史恢复和 Shell 结束状态。Harness SSE 与 Desktop 固定事件桥已验证实时 Session/Activity 更新和 cursor 重连。2026-11-01 又在 Core 本地开发分支接入 `watch_ready`、终端字节区间和结束游标，Harness 已加入历史/实时连续性校验、缺口 fail-closed 与旧 watch generation 隔离；同一 WebSocket 重复订阅、488,728 字节历史恢复、Shell 结束和 20,000 行洪峰均已通过隔离 E2E。Terminal 现支持自动重连：断线进入 `reconnecting`，按 200 ms–5 s 退避，并用新游标分页补齐可证明区间；不可恢复缺口保持 `unknown`。顶部布局操作已按频率拆分：布局设置收纳低频导入/导出/复制/恢复，添加模块与命令面板分离，`Ctrl+K` 打开可搜索 UI 命令和模块的独立面板。
 
 > 多 Space 导航（2026-11-01）：固定场景模板不再占据 Space 切换器的首要层级；“我的 Spaces”优先展示，并支持从空白或场景模板创建多个个人 Space、重命名、删除和独立持久化布局/历史。当前验证为前端类型检查、39 项 Node 回归、Vite production build 和 1440/390 px 浏览器交互回归；尚未在真实 Wails 窗口复验。
+>
+> 状态语义收口（2026-11-02）：MCP 未配置或没有 Server 时改为中性灰；本地持久化失败不再显示为已保存；Session 汇总把结果未知与失败、阻断、过期分开，并显式写出每项包含的状态。Desktop 当前可组合项统一称“面板”，不再把面板添加描述成模块安装。
 
 ## 使用规则
 
@@ -186,3 +188,16 @@ Workspace 导入导出、持久化格式首次发布、跨版本升级、跨 Wor
 - 重命名只改变导航名称，不停止、迁移或重绑任何运行中任务。
 - 删除只移除本地 Space 目录、布局、历史和 Session 引用，不删除服务端任务、终端或审批事实。
 - 个人 Space 数量、名称长度和重名检查有明确上限与可读错误。
+
+## UX-BL-008：状态诚实性与面板/模块命名
+
+**实现状态：** 已实现前端切片（2026-11-02）。MCP `0/0` 使用中性灰；持久化失败显示持续警示和“仅当前会话有效”；Session 汇总中“结果未知”独立计数；当前可组合视图统一使用“面板”，模块术语保留给未来安装与启用生命周期。
+
+**验证证据：** TypeScript 检查、43 项 Node 回归和 Vite production build 通过；Wails 可执行文件重新构建并启动。真实 Wails 自动视觉读取受 Computer Use/WebView2 调试通道限制，尚未完成。
+
+**验收要点**
+
+- 未配置 MCP 不能被显示为就绪。
+- localStorage 写入失败时不能继续显示“已保存”。
+- `unknown` 不得计入失败或异常。
+- 只有完成 Manifest、安装和启用生命周期后，UI 才能把对象称为可安装模块。
