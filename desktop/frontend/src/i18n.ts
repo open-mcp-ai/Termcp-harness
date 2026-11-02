@@ -319,6 +319,18 @@ const zhCN = {
     failed: "执行失败",
     unknown: "结果未知",
   },
+  recoveryState: {
+    not_configured: "未配置",
+    unverified: "未验证",
+    complete: "完整",
+    partial: "部分恢复",
+  },
+  recoveryStoreState: {
+    not_configured: "未配置",
+    missing: "缺失",
+    present: "已读取",
+    unreadable: "不可读",
+  },
   approvalState: {
     pending: "待审批",
     submitting: "提交中",
@@ -363,6 +375,14 @@ export function agentStateLabel(value: string): string {
 
 export function executionStateLabel(value: string): string {
   return messages.executionState[value as keyof typeof messages.executionState] ?? value;
+}
+
+export function recoveryStateLabel(value: string): string {
+  return messages.recoveryState[value as keyof typeof messages.recoveryState] ?? value;
+}
+
+export function recoveryStoreStateLabel(value: string): string {
+  return messages.recoveryStoreState[value as keyof typeof messages.recoveryStoreState] ?? value;
 }
 
 export function approvalStateLabel(value: string): string {

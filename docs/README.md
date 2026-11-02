@@ -37,6 +37,7 @@ docs/
 │       ├── event-log.md
 │       ├── mcp-server-states.md
 │       ├── model-adapter.md
+│       ├── recovery-manifest.md
 │       ├── state-machines.md
 │       └── terminal-bridge.md
 └── adr/
@@ -60,7 +61,8 @@ docs/
     ├── ADR-018-agent-session-persistence.md
     ├── ADR-019-event-journal-persistence.md
     ├── ADR-020-approval-history-persistence.md
-    └── ADR-021-agent-cancellation.md
+    ├── ADR-021-agent-cancellation.md
+    └── ADR-022-cross-store-recovery-manifest.md
 ```
 
 ## 阅读顺序
@@ -95,6 +97,7 @@ docs/
 28. `docs/adr/ADR-019-event-journal-persistence.md`（事件窗口、sequence 与重启恢复边界）
 29. `docs/adr/ADR-020-approval-history-persistence.md`（审批历史、fail-closed 恢复与执行元数据边界）
 30. `docs/adr/ADR-021-agent-cancellation.md`（Agent 停止任务、派发门与人工接管边界）
+31. `docs/adr/ADR-022-cross-store-recovery-manifest.md`（跨 Store 恢复证据与部分恢复诊断）
 
 ## 文档职责
 

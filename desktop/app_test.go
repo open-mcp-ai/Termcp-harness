@@ -21,6 +21,14 @@ func TestAppBootstrapReadsRuntimeContract(t *testing.T) {
 			writeJSON(t, w, map[string]any{"status": "ok", "state": "running", "version": "test"})
 		case "/v1/runtime":
 			writeJSON(t, w, map[string]any{"instance_id": "runtime-1", "version": "test", "state": "running"})
+		case "/v1/recovery":
+			writeJSON(t, w, map[string]any{
+				"manifest_configured": false,
+				"manifest_present":    false,
+				"state":               "not_configured",
+				"consistent":          true,
+				"stores":              []any{},
+			})
 		case "/v1/events":
 			writeJSON(t, w, map[string]any{"events": []any{}, "latest_sequence": 0})
 		case "/v1/mcp/servers":

@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
+	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
@@ -162,6 +164,70 @@ func TestServeApprovalStoreRequiresCore(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "requires a configured Core") {
 		t.Fatalf("runServe() error = %v", err)
+	}
+}
+
+func TestServeRecoveryManifestRequiresPersistentStore(t *testing.T) {
+	manifestPath := filepath.Join(t.TempDir(), "recovery.json")
+	var stderr bytes.Buffer
+	err := runServe(
+		context.Background(),
+		[]string{"--recovery-manifest-file", manifestPath},
+		&stderr,
+	)
+	if err == nil || !strings.Contains(err.Error(), "requires at least one persistent store") {
+		t.Fatalf("runServe() error = %v", err)
+	}
+}
+
+func TestServeWritesAndRefreshesRecoveryManifest(t *testing.T) {
+	root := t.TempDir()
+	eventPath := filepath.Join(root, "events.json")
+	sessionPath := filepath.Join(root, "sessions.json")
+	manifestPath := filepath.Join(root, "recovery.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	var stderr bytes.Buffer
+	go func() {
+		done <- runServe(ctx, []string{
+			"--listen", "127.0.0.1:0",
+			"--event-log-file", eventPath,
+			"--session-store-file", sessionPath,
+			"--recovery-manifest-file", manifestPath,
+		}, &stderr)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(manifestPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("recovery manifest was not created; stderr=%s", stderr.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runServe() error = %v; stderr=%s", err, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runServe() did not stop after cancellation")
+	}
+
+	snapshot := recovery.Inspect(recovery.Config{
+		ManifestPath: manifestPath,
+		Stores: map[recovery.StoreName]string{
+			recovery.StoreEvents:   eventPath,
+			recovery.StoreSessions: sessionPath,
+		},
+	})
+	if snapshot.State != recovery.StateComplete || !snapshot.Consistent {
+		t.Fatalf("recovery snapshot = %+v; stderr=%s", snapshot, stderr.String())
 	}
 }
 

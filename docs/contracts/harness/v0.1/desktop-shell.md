@@ -84,6 +84,7 @@ http://127.0.0.1:8787
 - 面板关闭明确提示关联任务、Session 和审批不会停止；关闭审批详情不代表拒绝或取消。
 - Canvas 状态使用 schema v2，面板 ID 与模块上下文分别保存，并兼容旧版布局数据。
 - Space 切换器优先展示“我的 Spaces”，固定场景模板收在次级分组；用户可从空白或场景模板创建多个个人 Space，并在同一菜单重命名或删除。Space 目录保存在 `termcp.canvas.spaces`，布局、Session 引用和撤销历史按 Space ID 隔离。
+- Diagnostics 面板显示跨 Store 恢复状态、恢复清单版本、基线时间、Store 大小和指纹摘要；`partial` 与 `unverified` 在主区域可见，不把部分恢复表述为完整恢复。
 - 新建 Space 当前最多保留 20 个个人 Space；删除确认明确只移除本地布局、历史和 Session 引用，不停止或重绑 Agent、Terminal、工具调用与审批。旧版唯一 `custom` Space 作为首个个人 Space 读取，不迁移为固定模板。
 - 当前 Workspace 可导出为 Recipe v1 JSON；导入先显示来源、面板数和修复警告，只有用户确认后才替换当前 Workspace。
 - Recipe 最大 1 MiB、最多 64 个面板；未知模块、损坏单面板和未知字段被隔离，越界坐标裁剪，无效锁定上下文改为跟随，重复模块和重叠布局不会静默接受。

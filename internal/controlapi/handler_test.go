@@ -13,8 +13,46 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
 )
+
+func TestRecoveryEndpointReportsPartialStateWithoutPaths(t *testing.T) {
+	rt, err := runtime.New("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := recovery.Snapshot{
+		ManifestConfigured: true,
+		ManifestPresent:    true,
+		ManifestVersion:    recovery.ManifestVersion,
+		State:              recovery.StatePartial,
+		Warning:            "store mismatch",
+		Stores: []recovery.StoreSnapshot{{
+			Name:       recovery.StoreEvents,
+			Configured: true,
+			State:      recovery.StorePresent,
+			Exists:     true,
+			Size:       10,
+		}},
+	}
+	response := httptest.NewRecorder()
+	NewHandler(rt, WithRecovery(recovery.NewReader(snapshot))).ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/v1/recovery", nil),
+	)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d", response.Code)
+	}
+	var body recovery.Snapshot
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.State != recovery.StatePartial || body.Consistent || len(body.Stores) != 1 {
+		t.Fatalf("body = %+v", body)
+	}
+}
 
 func TestHealthReportsUnavailableBeforeStart(t *testing.T) {
 	rt, err := runtime.New("test")

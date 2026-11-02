@@ -48,6 +48,35 @@ Runtime 处于 `running` 时返回 `200`，其他生命周期状态返回 `503`�
 
 `failed` 已为未来失败收敛保留，本版控制 API 不会主动产生该状态。
 
+## `GET /v1/recovery`
+
+返回 Event、Session 和 Approval Store 的最近恢复证据。详细字段、状态和边界见 `recovery-manifest.md`。
+
+典型响应：
+
+```json
+{
+  "manifest_configured": true,
+  "manifest_present": true,
+  "manifest_version": 1,
+  "recorded_at": "2026-11-02T00:00:00Z",
+  "state": "complete",
+  "consistent": true,
+  "stores": [
+    {
+      "name": "events",
+      "configured": true,
+      "state": "present",
+      "exists": true,
+      "size": 4096,
+      "fingerprint": "<sha256>"
+    }
+  ]
+}
+```
+
+`complete` 只证明 Store 集合与最后正常基线匹配，不表示审批队列、MCP 连接或活动工具执行已经恢复。
+
 ## `GET /v1/events`
 
 按 Harness 本地 `sequence` 补拉有界事件窗口。详细语义、容量、截断标记和 payload 限制见 `event-log.md`。

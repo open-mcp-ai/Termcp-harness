@@ -49,7 +49,7 @@ import {
 } from "./canvas";
 import { persistEventCursor, resolveEventCursor } from "./eventCursor";
 import { mergeRealtimeEvents } from "./events";
-import { agentStateLabel, coreStateLabel, messages } from "./i18n";
+import { agentStateLabel, coreStateLabel, messages, recoveryStateLabel } from "./i18n";
 import {
   ActivityPanel,
   AgentPanel,
@@ -1184,6 +1184,21 @@ export default function App() {
               </details>
             </div>
             <button type="button" onClick={() => void refresh()}>{messages.app.tryAgain}</button>
+          </div>
+        ) : null}
+
+        {data?.recovery?.state === "partial" || data?.recovery?.state === "unverified" ? (
+          <div
+            className={`canvas-recovery-problem ${data.recovery.state}`}
+            role={data.recovery.state === "partial" ? "alert" : "status"}
+          >
+            <strong>{recoveryStateLabel(data.recovery.state)}</strong>
+            <span>
+              {data.recovery.warning
+                ?? (data.recovery.state === "partial"
+                  ? "部分 Store 与恢复清单不一致，请先在诊断面板核对。"
+                  : "各 Store 可独立读取，但尚未证明属于同一恢复代次。")}
+            </span>
           </div>
         ) : null}
 

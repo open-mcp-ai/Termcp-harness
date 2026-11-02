@@ -28,12 +28,13 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/model"
+	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	runtimepkg "github.com/open-mcp-ai/termcp-harness/internal/runtime"
 	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
-var version = "v0.1.5"
+var version = "v0.1.6"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -560,6 +561,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	modelMaxOutputTokens := flags.Int("model-max-output-tokens", 1024, "model output token limit")
 	eventLogFile := flags.String("event-log-file", "", "optional JSON file for the persisted bounded Event Journal")
 	sessionStoreFile := flags.String("session-store-file", "", "optional JSON file for persisted Agent Sessions and model transcripts")
+	recoveryManifestFile := flags.String("recovery-manifest-file", "", "optional JSON manifest for cross-store recovery consistency")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -607,6 +609,55 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+
+	recoveryConfig := recovery.Config{
+		ManifestPath: strings.TrimSpace(*recoveryManifestFile),
+		Stores: map[recovery.StoreName]string{
+			recovery.StoreEvents:    *eventLogFile,
+			recovery.StoreSessions:  *sessionStoreFile,
+			recovery.StoreApprovals: *approvalStoreFile,
+		},
+	}
+	recoveryStoreConfigured := false
+	for _, path := range recoveryConfig.Stores {
+		if strings.TrimSpace(path) != "" {
+			recoveryStoreConfigured = true
+			break
+		}
+	}
+	if recoveryConfig.ManifestPath != "" && !recoveryStoreConfigured {
+		return errors.New("--recovery-manifest-file requires at least one persistent store file")
+	}
+	recoverySnapshot := recovery.Inspect(recoveryConfig)
+	if recoverySnapshot.ManifestConfigured && len(recoverySnapshot.Stores) > 0 {
+		allMissing := true
+		anyConfigured := false
+		for _, store := range recoverySnapshot.Stores {
+			if !store.Configured {
+				continue
+			}
+			anyConfigured = true
+			if store.Exists || store.State == recovery.StoreUnreadable {
+				allMissing = false
+			}
+		}
+		if anyConfigured && allMissing && recoverySnapshot.State == recovery.StateUnverified {
+			recoverySnapshot, err = recovery.WriteManifest(recoveryConfig)
+			if err != nil {
+				return fmt.Errorf("initialize recovery manifest: %w", err)
+			}
+		}
+	}
+	logger.Info(
+		"recovery state inspected",
+		"state", recoverySnapshot.State,
+		"consistent", recoverySnapshot.Consistent,
+		"manifest_present", recoverySnapshot.ManifestPresent,
+	)
+	if recoverySnapshot.State == recovery.StatePartial {
+		logger.Warn("recovery state is partial", "warning", recoverySnapshot.Warning)
+	}
 
 	var journal *eventlog.Journal
 	if strings.TrimSpace(*eventLogFile) != "" {
@@ -644,7 +695,6 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 		return err
 	}
 
-	logger := slog.New(slog.NewJSONHandler(stderr, nil))
 	serveContext, cancelServe := context.WithCancel(ctx)
 	defer cancelServe()
 
@@ -781,6 +831,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 
 	controlOptions := []controlapi.Option{
 		controlapi.WithEventLog(journal),
+		controlapi.WithRecovery(recovery.NewReader(recoverySnapshot)),
 		controlapi.WithMCPRegistry(host),
 		controlapi.WithCore(coreManager),
 		controlapi.WithAgentSessions(agentSessions),
@@ -922,8 +973,19 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) error {
 		go host.Run(serveContext)
 	}
 	logger.Info("starting runtime", "instance_id", rt.Snapshot().InstanceID, "listen", *listenAddress)
-	if err := server.Run(serveContext); err != nil {
-		return err
+	writeRecoveryBaseline := recoverySnapshot.State != recovery.StatePartial
+	runErr := server.Run(serveContext)
+	cancelServe()
+	_ = host.Close()
+	if runErr != nil {
+		return runErr
+	}
+	if writeRecoveryBaseline && recoverySnapshot.ManifestConfigured {
+		if _, manifestErr := recovery.WriteManifest(recoveryConfig); manifestErr != nil {
+			logger.Error("recovery manifest update failed", "error", manifestErr)
+		} else {
+			logger.Info("recovery manifest updated")
+		}
 	}
 	logger.Info("runtime stopped", "instance_id", rt.Snapshot().InstanceID)
 	return nil

@@ -4,6 +4,35 @@ Termcp Harness 的重要功能与架构变更记录。
 
 当前版本在 `dev` 分支持续迭代，不承诺跨版本兼容。版本号采用语义化版本的基础形式，每次可独立验收的功能里程碑递增补丁号。
 
+## [v0.1.6] - 2026-11-02
+
+### Added
+
+- 新增可选 `--recovery-manifest-file`，记录 Event、Session、Approval Store 的存在性、大小和 SHA-256 指纹。
+- 新增 `GET /v1/recovery`，返回 `not_configured`、`unverified`、`complete` 或 `partial` 恢复状态。
+- Desktop 诊断面板显示恢复清单版本、基线时间、各 Store 状态、大小和指纹摘要。
+- 不完整或未验证恢复会在 Desktop 主区域显示警示，不把部分数据表述为完整恢复。
+
+### Changed
+
+- Runtime 首次空恢复可建立清单基线；正常停止后更新基线。
+- 启动时已判定为 `partial` 的恢复不会在退出时静默覆盖为新基线。
+- 恢复清单不保存 Store 路径、事件正文、Session 内容、工具参数、审批详情或凭据。
+
+### Verification
+
+- 恢复清单测试覆盖未配置、未验证、匹配、Store 变更、Store 缺失、不可读、损坏清单和未知版本。
+- Control API 测试确认恢复状态可见且不泄露 Store 路径。
+- Control Client、Desktop Bootstrap、CLI 恢复参数和前端生产构建通过。
+- `go test -race ./...`、`go vet ./...`、`go build ./...` 通过。
+
+### Known limitations
+
+- 不提供跨文件原子事务。
+- `complete` 不等于审批队列、MCP 连接或活动工具执行已恢复。
+- 不完整的恢复尚无自动修复命令；必须先核对或恢复原 Store。
+- 自动 Agent 恢复仍未启用。
+
 ## [v0.1.5] - 2026-11-02
 
 ### Changed

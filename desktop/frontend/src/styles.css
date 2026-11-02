@@ -1880,6 +1880,37 @@ h1 {
   color: #66798d;
 }
 
+.diagnostic-recovery {
+  grid-column: 1 / -1;
+}
+
+.recovery-store-list {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recovery-store-list li {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #ffffff;
+  border: 1px solid #e1e8f1;
+  border-radius: 6px;
+}
+
+.recovery-store-list small {
+  overflow: hidden;
+  color: #71869a;
+  font: 10px "Cascadia Mono", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .canvas-list {
   display: grid;
   gap: 6px;
@@ -3195,6 +3226,29 @@ h1 {
 }
 
 .canvas-persistence-problem strong {
+  flex: none;
+}
+
+.canvas-recovery-problem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 11px;
+  color: #8a5e1d;
+  background: #fff8e8;
+  border: 1px solid #ecd8aa;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.canvas-recovery-problem.partial {
+  color: #8a3529;
+  background: #fff3ef;
+  border-color: #ebc7bd;
+}
+
+.canvas-recovery-problem strong {
   flex: none;
 }
 

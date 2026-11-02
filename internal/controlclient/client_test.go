@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
+	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
@@ -21,6 +22,15 @@ func TestBootstrapReadsOnlyFixedControlEndpoints(t *testing.T) {
 			writeTestJSON(w, http.StatusOK, map[string]any{"status": "ok", "state": "running", "version": "test"})
 		case "/v1/runtime":
 			writeTestJSON(w, http.StatusOK, map[string]any{"instance_id": "runtime-1", "version": "test", "state": "running"})
+		case "/v1/recovery":
+			writeTestJSON(w, http.StatusOK, map[string]any{
+				"manifest_configured": true,
+				"manifest_present":    true,
+				"manifest_version":    1,
+				"state":               "complete",
+				"consistent":          true,
+				"stores":              []any{},
+			})
 		case "/v1/events":
 			if request.URL.Query().Get("after") != "0" || request.URL.Query().Get("limit") != "200" {
 				t.Errorf("unexpected event query = %s", request.URL.RawQuery)
@@ -81,6 +91,7 @@ func TestBootstrapReadsOnlyFixedControlEndpoints(t *testing.T) {
 		t.Fatalf("Bootstrap() error = %v", err)
 	}
 	if result.Runtime.InstanceID != "runtime-1" || result.Health.Status != "ok" ||
+		result.Recovery.State != recovery.StateComplete || !result.Recovery.Consistent ||
 		!result.MCP.ControlPlaneOn || result.Core.Core == nil || result.Core.Core.PID != 14560 ||
 		!result.Approvals.Configured || result.Approvals.Total != 1 ||
 		result.Approvals.CorrelationCapability != approval.CorrelationCapabilityTrusted ||

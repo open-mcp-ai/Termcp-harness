@@ -18,6 +18,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
@@ -116,6 +117,7 @@ type Bootstrap struct {
 	Endpoint      string             `json:"endpoint"`
 	Health        Health             `json:"health"`
 	Runtime       runtime.Snapshot   `json:"runtime"`
+	Recovery      recovery.Snapshot  `json:"recovery"`
 	Events        eventlog.Window    `json:"events"`
 	MCP           MCPServers         `json:"mcp"`
 	Core          CoreState          `json:"core"`
@@ -160,6 +162,9 @@ func (c *Client) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	}
 	if _, err := c.getJSON(ctx, "/v1/runtime", []int{http.StatusOK}, &bootstrap.Runtime); err != nil {
 		return Bootstrap{}, fmt.Errorf("read runtime snapshot: %w", err)
+	}
+	if _, err := c.getJSON(ctx, "/v1/recovery", []int{http.StatusOK}, &bootstrap.Recovery); err != nil {
+		return Bootstrap{}, fmt.Errorf("read recovery status: %w", err)
 	}
 	if _, err := c.getJSON(ctx, fmt.Sprintf("/v1/events?after=0&limit=%d", defaultEventLimit), []int{http.StatusOK}, &bootstrap.Events); err != nil {
 		return Bootstrap{}, fmt.Errorf("read event window: %w", err)

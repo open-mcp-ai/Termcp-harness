@@ -25,6 +25,8 @@ import {
   executionStateLabel,
   mcpStateLabel,
   messages,
+  recoveryStateLabel,
+  recoveryStoreStateLabel,
 } from "./i18n";
 import {
   approvalTimeline,
@@ -1338,6 +1340,7 @@ function ActivityPanelView({
 
 function DiagnosticsPanelView({ data, stale }: { data: Bootstrap; stale: boolean }) {
   const core = data.core.core;
+  const recovery = data.recovery;
   return (
     <div className="canvas-module diagnostics-module">
       {stale ? <p className="canvas-warning">{messages.ledger.lastKnownNote}</p> : null}
@@ -1358,6 +1361,42 @@ function DiagnosticsPanelView({ data, stale }: { data: Bootstrap; stale: boolean
             <div><dt>版本</dt><dd>{core?.version ?? messages.common.unknown}</dd></div>
             <div><dt>端点</dt><dd>{core?.endpoint ?? messages.common.notRecorded}</dd></div>
           </dl>
+        </section>
+        <section className={`diagnostic-recovery ${recovery?.state ?? "not_configured"}`}>
+          <h3>本地恢复</h3>
+          <dl className="canvas-facts">
+            <div><dt>状态</dt><dd>{recoveryStateLabel(recovery?.state ?? "not_configured")}</dd></div>
+            <div>
+              <dt>一致性</dt>
+              <dd>
+                {!recovery || recovery.state === "not_configured"
+                  ? "不适用"
+                  : recovery.consistent
+                    ? "已证明"
+                    : "未证明"}
+              </dd>
+            </div>
+            <div><dt>恢复清单</dt><dd>{recovery?.manifest_present ? `v${recovery.manifest_version ?? "?"}` : "不存在"}</dd></div>
+            <div><dt>最近基线</dt><dd>{recovery?.recorded_at ? formatTime(recovery.recorded_at) : "未记录"}</dd></div>
+          </dl>
+          {recovery?.warning ? <p className="canvas-warning">{recovery.warning}</p> : null}
+          <ul className="recovery-store-list">
+            {(recovery?.stores ?? []).map((store) => (
+              <li key={store.name}>
+                <strong>{store.name}</strong>
+                <span className={`state-badge ${store.state === "present" ? "ready" : store.state === "unreadable" ? "danger" : "warning"}`}>
+                  {recoveryStoreStateLabel(store.state)}
+                </span>
+                <small>
+                  {store.configured
+                    ? store.exists
+                      ? `${store.size ?? 0} bytes · ${shortID(store.fingerprint)}`
+                      : store.error ?? "没有持久化文件"
+                    : "未配置"}
+                </small>
+              </li>
+            ))}
+          </ul>
         </section>
       </div>
     </div>

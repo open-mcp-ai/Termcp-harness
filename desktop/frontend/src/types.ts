@@ -367,10 +367,35 @@ export interface TerminalPollResult extends TerminalSnapshot {
   output?: string;
 }
 
+export type RecoveryState = "not_configured" | "unverified" | "complete" | "partial";
+export type RecoveryStoreState = "not_configured" | "missing" | "present" | "unreadable";
+
+export interface RecoveryStoreSnapshot {
+  name: string;
+  configured: boolean;
+  state: RecoveryStoreState;
+  exists: boolean;
+  size?: number;
+  fingerprint?: string;
+  error?: string;
+}
+
+export interface RecoverySnapshot {
+  manifest_configured: boolean;
+  manifest_present: boolean;
+  manifest_version?: number;
+  recorded_at?: string;
+  state: RecoveryState;
+  consistent: boolean;
+  stores: RecoveryStoreSnapshot[];
+  warning?: string;
+}
+
 export interface Bootstrap {
   endpoint: string;
   health: Health;
   runtime: RuntimeSnapshot;
+  recovery: RecoverySnapshot;
   events: EventWindow;
   mcp: MCPState;
   core: CoreState;

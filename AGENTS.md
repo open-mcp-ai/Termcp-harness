@@ -41,6 +41,7 @@ go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http:/
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>' --model-endpoint http://127.0.0.1:11434/v1/chat/completions --model-id '<model-id>' --model-token-file '<private-model-token-file>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>' --session-store-file '<private-session-store-file>' --event-log-file '<private-event-store-file>' --approval-store-file '<private-approval-store-file>'
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>' --session-store-file '<private-session-store-file>' --event-log-file '<private-event-store-file>' --approval-store-file '<private-approval-store-file>' --recovery-manifest-file '<private-recovery-manifest-file>'
 go run ./cmd/termcp-harness agent run --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --steps-file .\examples\agent-steps.readonly.json --token-file '<private-token-file>'
 go run ./cmd/termcp-harness agent loop --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --input-file '<message-file>' --max-iterations 8 --max-tool-calls 16 --token-file '<private-token-file>'
 go run ./cmd/termcp-harness agent resume --runtime http://127.0.0.1:8787 --id '<restarted-agent-session-id>' --token-file '<private-token-file>'
@@ -187,6 +188,7 @@ Desktop 的审批 token 只从受限文件读入 Go 进程内存；前端只能�
 - `docs/adr/ADR-017-model-adapter-agent-loop.md` — **Proposed / 首个切片已实现**：可替换模型 Adapter、有界 Agent Loop、上下文投影与安全边界。
 - `docs/adr/ADR-018-agent-session-persistence.md` — **Proposed / 首个切片已实现**：Agent Session、模型消息和最终回复的本地文件持久化边界。
 - `docs/adr/ADR-021-agent-cancellation.md` — **Accepted / 本地闭环已实现**：Agent 停止任务、派发门、远端未知风险和 Desktop 人工接管。
+- `docs/adr/ADR-022-cross-store-recovery-manifest.md` — **Accepted / 首个切片已实现**：跨 Store 恢复清单、同代次证据和部分恢复诊断。
 - `docs/development/BRANCHING.md` — 上游分支观察与 Harness 的 trunk-based 分支策略。
 - `docs/contracts/README.md` — Core 与 Harness 公开契约、来源、版本和验证记录规范。
 - `docs/contracts/harness/v0.1/core-instance.md` — Core 身份、external/managed/unverified 所有权、实例键和重启检测。
@@ -194,6 +196,7 @@ Desktop 的审批 token 只从受限文件读入 Go 进程内存；前端只能�
 - `docs/contracts/harness/v0.1/model-adapter.md` — OpenAI-compatible 模型 Adapter、工具目录、上下文投影、工具回填与当前限制。
 - `docs/contracts/harness/v0.1/mcp-server-states.md` — MCP Server 的登记、连接、能力、启用和所有权状态边界。
 - `docs/contracts/harness/v0.1/event-log.md` — 本地事件顺序、有界保留、截断和补拉 API。
+- `docs/contracts/harness/v0.1/recovery-manifest.md` — Event、Session、Approval Store 的恢复清单与一致性状态。
 - `docs/contracts/harness/v0.1/desktop-shell.md` — Desktop Wails 桥接、端点限制、视觉边界和未实现能力。
 - `docs/contracts/core/v0.2.8/metadata.md` — 已安装 Core 0.2.8 的来源、版本和实际端点证据。
 - `docs/contracts/core/v0.2.8/mcp.md` — Core MCP 握手、能力、工具 Schema 与待验证行为。

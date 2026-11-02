@@ -17,6 +17,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/model"
+	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
@@ -38,6 +39,7 @@ type EventReader interface {
 
 type handlerOptions struct {
 	events        EventReader
+	recovery      RecoveryReader
 	mcp           MCPLister
 	core          CoreReader
 	approvals     ApprovalLister
@@ -60,6 +62,16 @@ type Option func(*handlerOptions)
 func WithEventLog(events EventReader) Option {
 	return func(options *handlerOptions) {
 		options.events = events
+	}
+}
+
+type RecoveryReader interface {
+	RecoverySnapshot() recovery.Snapshot
+}
+
+func WithRecovery(reader RecoveryReader) Option {
+	return func(options *handlerOptions) {
+		options.recovery = reader
 	}
 }
 
@@ -333,6 +345,19 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 
 	mux.HandleFunc("GET /v1/runtime", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, source.Snapshot())
+	})
+	mux.HandleFunc("GET /v1/recovery", func(w http.ResponseWriter, _ *http.Request) {
+		response := recovery.Snapshot{State: recovery.StateNotConfigured, Consistent: true}
+		if config.recovery != nil {
+			response = config.recovery.RecoverySnapshot()
+		}
+		if response.State == "" {
+			response.State = recovery.StateNotConfigured
+		}
+		if response.Stores == nil {
+			response.Stores = []recovery.StoreSnapshot{}
+		}
+		writeJSON(w, http.StatusOK, response)
 	})
 	mux.HandleFunc("GET /v1/core", func(w http.ResponseWriter, _ *http.Request) {
 		response := coreResponse{}
