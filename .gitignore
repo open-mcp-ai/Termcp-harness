@@ -1,0 +1,26 @@
+# Build outputs
+/bin/
+/dist/
+/termcp-harness
+/termcp-harness.exe
+/desktop/build/*
+!/desktop/build/appicon.png
+!/desktop/build/windows/
+/desktop/build/windows/*
+!/desktop/build/windows/icon.ico
+/desktop/frontend/node_modules/
+/desktop/frontend/package.json.md5
+/desktop/frontend/wailsjs/
+
+# Go test artifacts
+*.test
+coverage.out
+
+# Local runtime data and logs
+/.cache/
+/.worktrees/
+*.log
+
+# OS and editor files
+.DS_Store
+Thumbs.db

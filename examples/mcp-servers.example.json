@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "id": "external-stdio",
+      "name": "External Stdio",
+      "transport": "stdio",
+      "command": "<mcp-server-executable>",
+      "args": [],
+      "env": [],
+      "workdir": ".",
+      "enabled": true
+    },
+    {
+      "id": "external-http",
+      "name": "External HTTP",
+      "transport": "streamable-http",
+      "endpoint": "http://127.0.0.1:18888/stream",
+      "auth_token_file": "<private-token-file>",
+      "enabled": false
+    }
+  ]
+}

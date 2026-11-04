@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "call_id": "call-readonly-1",
+      "server_id": "termcp-core",
+      "tool_name": "term",
+      "arguments": {
+        "cmd": ""
+      }
+    }
+  ]
+}

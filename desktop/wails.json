@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "termcp-harness",
+  "outputfilename": "termcp-harness-desktop",
+  "frontend:install": "npm ci",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "termcp-harness contributors"
+  },
+  "info": {
+    "companyName": "open-mcp-ai",
+    "productName": "Termcp Harness",
+    "productVersion": "0.1.10",
+    "copyright": "Copyright © 2026 open-mcp-ai contributors",
+    "comments": "Headless-compatible MCP runtime workspace"
+  }
+}
