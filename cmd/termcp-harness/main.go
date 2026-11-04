@@ -594,7 +594,7 @@ func runCoreService(ctx context.Context, args []string, stdout, stderr io.Writer
 		flags.SetOutput(stderr)
 		binary := flags.String("binary", "", "prebuilt Core executable; defaults to the adjacent Core bundle")
 		profilePath := flags.String("profile", defaultProfile, "Core service profile path")
-		endpoint := flags.String("endpoint", coreservice.DefaultEndpoint(), "fixed loopback Core HTTP origin")
+		endpoint := flags.String("endpoint", "", "fixed loopback Core HTTP origin; existing profile value is preserved when omitted")
 		dataDir := flags.String("data-dir", "", "persistent Core data directory; defaults to ~/.termcp")
 		authTokenFile := flags.String("auth-token-file", "", "optional file containing the Core bearer token")
 		if err := flags.Parse(args[1:]); err != nil {
@@ -618,11 +618,30 @@ func runCoreService(ctx context.Context, args []string, stdout, stderr io.Writer
 			}
 			binaryPath = bundle.BinaryPath
 		}
-		if strings.TrimSpace(*dataDir) == "" {
-			*dataDir, err = coreservice.DefaultDataDir()
-			if err != nil {
-				return err
+		existing, existingConfigured, err := coreservice.ReadProfileFile(*profilePath)
+		if err != nil {
+			return err
+		}
+		selectedEndpoint := strings.TrimSpace(*endpoint)
+		if selectedEndpoint == "" {
+			selectedEndpoint = coreservice.DefaultEndpoint()
+			if existingConfigured {
+				selectedEndpoint = existing.Endpoint
 			}
+		}
+		selectedDataDir := strings.TrimSpace(*dataDir)
+		if selectedDataDir == "" {
+			selectedDataDir = strings.TrimSpace(existing.DataDir)
+			if selectedDataDir == "" {
+				selectedDataDir, err = coreservice.DefaultDataDir()
+				if err != nil {
+					return err
+				}
+			}
+		}
+		selectedTokenFile := strings.TrimSpace(*authTokenFile)
+		if selectedTokenFile == "" && existingConfigured {
+			selectedTokenFile = strings.TrimSpace(existing.AuthTokenFile)
 		}
 		coreVersion, digest, err := coreservice.InspectBinary(ctx, binaryPath)
 		if err != nil {
@@ -633,9 +652,9 @@ func runCoreService(ctx context.Context, args []string, stdout, stderr io.Writer
 			BinaryPath:      binaryPath,
 			ExpectedVersion: coreVersion,
 			BinarySHA256:    digest,
-			Endpoint:        *endpoint,
-			DataDir:         *dataDir,
-			AuthTokenFile:   *authTokenFile,
+			Endpoint:        selectedEndpoint,
+			DataDir:         selectedDataDir,
+			AuthTokenFile:   selectedTokenFile,
 		})
 		if err != nil {
 			return err

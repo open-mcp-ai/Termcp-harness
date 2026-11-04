@@ -89,11 +89,14 @@ wails build -m -nosyncgomod -clean
 Set-Location ..
 .\desktop\scripts\package-release.ps1 -CoreSourceDir '<core-source-directory>'
 .\desktop\scripts\package-release.ps1 -CoreSourceDir '<core-source-directory>' -AllowDirty -SkipTests -SmokeTest
+.\desktop\scripts\build-installer.ps1 -PackageDir '<release-package-dir>' -OutputDirectory '<output-dir>'
 ```
 
 Desktop 无 `--runtime` 时内嵌启动 Harness Runtime，并默认查找 `<desktop-exe-dir>\core\manifest.json`。只有确认“退出 Harness”才停止本次 Desktop 拥有的 Runtime/Core；“最小化到任务栏”不会停止任务。`--runtime` 用于显式连接外部 Headless Runtime。
 
 发布脚本默认拒绝 dirty Harness/Core；`-AllowDirty` 只能生成 `release.json` 标记为 `candidate` 的产物。`-SmokeTest` 从包内入口启动并核验相邻 Core 的 `managed` 身份。
+
+`desktop/scripts/build-installer.ps1` 生成带“持久 Core”选项的 NSIS 安装器；静默安装可传 `/PERSISTENT_CORE=1`，`/PERSISTENT_CORE=0` 会停用已有 profile 并保留 `.disabled.*` 备份。升级先停止旧 Core、替换文件、刷新版本/SHA-256 后重启；卸载停止 Core 但保留 profile 和用户数据。
 
 重新生成桌面与 CLI 的 Windows 图标（从仓库根目录执行）：
 

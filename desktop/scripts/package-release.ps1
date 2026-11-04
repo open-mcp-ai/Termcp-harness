@@ -310,16 +310,26 @@ try {
         Join-Path $productDir "Termcp Harness.exe"
     )
     Invoke-Checked -FilePath "go" -Arguments @(
+        "build", "-trimpath", "-o", (Join-Path $productDir "termcp-harness.exe"), ".\cmd\termcp-harness"
+    )
+    Invoke-Checked -FilePath "go" -Arguments @(
         "run", "./cmd/termcp-harness", "core", "bundle",
         "--binary", $coreExe,
         "--version", $coreVersion,
         "--out", (Join-Path $productDir "core")
     )
-    foreach ($document in @("README.md", "CHANGELOG.md")) {
-        $source = Join-Path $repoRoot $document
-        if (Test-Path -LiteralPath $source -PathType Leaf) {
-            Copy-Item -LiteralPath $source -Destination (Join-Path $productDir $document)
-        }
+    $installerReadme = Join-Path $repoRoot "desktop\installer\README.md"
+    if (-not (Test-Path -LiteralPath $installerReadme -PathType Leaf)) {
+        throw "Installer README is missing: $installerReadme"
+    }
+    Copy-Item -LiteralPath $installerReadme -Destination (
+        Join-Path $productDir "README.md"
+    )
+    $changelog = Join-Path $repoRoot "CHANGELOG.md"
+    if (Test-Path -LiteralPath $changelog -PathType Leaf) {
+        Copy-Item -LiteralPath $changelog -Destination (
+            Join-Path $productDir "CHANGELOG.md"
+        )
     }
 
     $artifactEntries = Get-RelativeChecksums -Root $productDir -ExcludeNames @(

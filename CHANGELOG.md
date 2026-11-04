@@ -13,16 +13,29 @@ Termcp Harness 的重要功能与架构变更记录。
 - 新增持久本地 Core profile 和 `core service install/start/status/stop`，Core 可由公开 daemon 命令独立运行；Harness 将其识别为 external，退出时不停止。
 - 新增 `GET /v1/core/sessions` 和 Desktop Core Sessions 面板，可发现 Harness 启动前由其他 Termcp 客户端创建的 Session，并在验证 running Shell 后直接观察终端。
 - 新增迟附着验证：外部创建 Session 后启动 Harness，清单可见；Harness 停止后 Core 与 Session 继续存在。
+- NSIS 安装器增加“持久 Core”选项，首次安装可选择 managed 或 persistent Core；静默安装支持 `/PERSISTENT_CORE=1` 和 `/PERSISTENT_CORE=0`。
+- 完整包与安装器包含 headless `termcp-harness.exe`，支持安装后 Core profile 查询、启停和维护。
+- 新增可复现的 `desktop/scripts/build-installer.ps1` 和受版本控制的 NSIS 模板。
 
 ### Changed
 
 - 退出确认框改为窗口居中模态，并在小窗口中限制高度和允许内部滚动；外部 Core 模式下提示退出只停止 Harness Runtime。
+- 持久 Core 升级会停止旧 Core、替换文件、重新校验版本与 SHA-256，再启动新 Core。
+- 已有 profile 默认保留 endpoint、数据目录和凭据引用；显式取消持久模式会把 profile 重命名为 `.disabled.*` 备份并保留数据。
+- 卸载会停止持久 Core，但保留用户 profile 与 Core 数据目录。
+
+### Verification
+
+- `go test -race ./...`、`go vet ./...`、`go build ./...` 和 `go mod tidy -diff` 通过。
+- 48 项前端测试、TypeScript 检查、Vite 构建和 Wails 生产构建通过。
+- 安装器 E2E 覆盖 managed 安装、persistent 安装、默认升级保留、显式停用、Session 保留和卸载清理。
 
 ### Known limitations
 
 - 尚无 Windows Service、登录自启动、托盘控制或 Core 崩溃自动重启。
 - Core 重启后的 DEAD Session 可出现在清单中，但完整只读历史终端视图尚未实现。
 - 外部 Agent 的模型 transcript、Harness 工具策略和审批历史不能从 Core 日志反推。
+- 升级期间 live SSH/PTY 会断开；历史 Session 和输出保留，但不会恢复 live 连接。
 
 ## [v0.1.9] - 2026-11-04
 
@@ -50,7 +63,7 @@ Termcp Harness 的重要功能与架构变更记录。
 
 ### Known limitations
 
-- 当前交付物是免安装目录和 ZIP，不包含安装器、代码签名、自动更新或 Core 补丁回滚。
+- 当前交付包含便携 ZIP 和 NSIS 安装器，但不包含代码签名、自动更新或 Core 补丁回滚。
 - Core 发布同步仍未关闭；本次候选固定到本地集成提交 `d8261c7`，不能表述为该环境已有包含全部修复的正式 Core 发布包。
 - MCP 新增、编辑、移除、Registry 持久化和重启恢复仍属于 `v0.2.0`。
 

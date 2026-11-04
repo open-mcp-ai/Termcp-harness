@@ -15,13 +15,13 @@ import (
 )
 
 const (
-	ProfileSchema    = 1
-	maxProfileBytes  = 64 << 10
+	ProfileSchema      = 1
+	maxProfileBytes    = 64 << 10
 	maxCoreBinaryBytes = 1 << 30
-	defaultEndpoint  = "http://127.0.0.1:18765"
-	profileFileName  = "core-service.json"
-	stateDirectory   = "termcp-harness"
-	defaultCoreState = ".termcp"
+	defaultEndpoint    = "http://127.0.0.1:18765"
+	profileFileName    = "core-service.json"
+	stateDirectory     = "termcp-harness"
+	defaultCoreState   = ".termcp"
 )
 
 type Profile struct {
@@ -102,6 +102,21 @@ func SaveProfile(path string, profile Profile) (Profile, error) {
 }
 
 func LoadProfile(path string) (Profile, bool, error) {
+	profile, present, err := ReadProfileFile(path)
+	if err != nil || !present {
+		return Profile{}, present, err
+	}
+	normalized, err := NormalizeProfile(profile)
+	if err != nil {
+		return Profile{}, false, err
+	}
+	return normalized, true, nil
+}
+
+// ReadProfileFile reads the durable profile without validating the current
+// binary. Upgrade flows use it to preserve endpoint, data directory, and
+// credential references while replacing the Core binary and its identity.
+func ReadProfileFile(path string) (Profile, bool, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		var err error
@@ -131,11 +146,7 @@ func LoadProfile(path string) (Profile, bool, error) {
 	if err := decoder.Decode(&profile); err != nil {
 		return Profile{}, false, fmt.Errorf("decode Core service profile: %w", err)
 	}
-	normalized, err := NormalizeProfile(profile)
-	if err != nil {
-		return Profile{}, false, err
-	}
-	return normalized, true, nil
+	return profile, true, nil
 }
 
 func NormalizeProfile(profile Profile) (Profile, error) {

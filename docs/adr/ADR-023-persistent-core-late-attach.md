@@ -60,3 +60,25 @@ Desktop 的 Core Sessions 面板可以：
 - 自动迟附着要求目标 Core 的版本与 profile 一致。
 - 外部 Agent transcript、Harness 工具策略和审批历史不能从 Core 终端日志反推。
 - Core 重启后的 DEAD Session 目前可出现在清单中，但完整只读历史终端视图尚未实现。
+
+## 7. 安装器选项与升级
+
+安装器的“持久 Core”复选框只决定首次安装是否创建 Core profile：
+
+- 未勾选：保持原有 managed Core 生命周期，Harness 退出时停止 Core。
+- 勾选：调用安装后的 CLI 创建 profile，并立即启动 external Core。
+- 静默安装可使用 `/PERSISTENT_CORE=1`。
+
+升级路径遵守以下规则：
+
+1. 如果已有 profile，安装器读取安装目录记录的 profile 路径并默认保持持久模式。
+2. 在覆盖程序文件前调用旧 CLI 停止旧 Core。
+3. 替换 Desktop、CLI 和 Core 后，用新二进制重新写入版本与 SHA-256；endpoint、data dir 和 token 文件引用保持不变。
+4. 重新启动新 Core。live SSH/PTY 会断开，持久 Session 与输出保留。
+5. 卸载时停止持久 Core，但保留用户 profile 和 Core 数据目录，便于重装后继续使用。
+
+用户可在升级时显式取消持久模式。安装器会停止 Core，将 active profile 重命名为
+`core-service.json.disabled.<tick>`，然后按 managed 模式继续；Core 数据目录不删除，
+可用该备份恢复配置。
+
+安装器模板和构建入口分别为 `desktop/installer/project.nsi` 与 `desktop/scripts/build-installer.ps1`。登录自启动和崩溃恢复仍未实现。

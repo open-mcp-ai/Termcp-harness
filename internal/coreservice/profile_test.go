@@ -52,6 +52,19 @@ func TestProfileRoundTripDoesNotContainTokenValue(t *testing.T) {
 	if loaded.BinarySHA256 != digest || loaded.AuthTokenFile != tokenPath {
 		t.Fatalf("loaded profile = %+v", loaded)
 	}
+	if err := os.WriteFile(binary, []byte("replacement-binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadProfile(path); err == nil {
+		t.Fatal("changed binary was accepted by LoadProfile")
+	}
+	upgrade, present, err := ReadProfileFile(path)
+	if err != nil || !present {
+		t.Fatalf("ReadProfileFile() = %+v, %t, %v", upgrade, present, err)
+	}
+	if upgrade.DataDir != filepath.Join(root, "data") || upgrade.AuthTokenFile != tokenPath {
+		t.Fatalf("upgrade profile = %+v", upgrade)
+	}
 }
 
 func TestEndpointHostPort(t *testing.T) {
