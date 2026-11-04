@@ -4,7 +4,37 @@ Termcp Harness 的重要功能与架构变更记录。
 
 当前版本在 `dev` 分支持续迭代，不承诺跨版本兼容。版本号采用语义化版本的基础形式，每次可独立验收的功能里程碑递增补丁号。
 
-## [v0.1.7] - 2026-11-03
+## [v0.1.9] - 2026-11-04
+
+`v0.1.9` 是 `v0.1.6` 之后首个计划实际发布的累积版本。`v0.1.7` 仅为未单独打 tag 的开发快照，`v0.1.8` 未形成单独快照；这两个版本号不得表述为已发布 tag。
+
+### Added
+
+- Desktop 默认内嵌 Harness Runtime，并从可执行文件旁的 `core/` 发现、校验和启动匹配的受管 Core；外部 Headless Runtime 仍可通过 `--runtime` 显式接入。
+- 新增受管 Core bundle、Desktop 内嵌 Runtime 装配和发布打包流程；发布目录包含 Runtime 与匹配 Core 的版本、commit、SHA-256、逐文件校验和及 ZIP 校验值。
+- 新增发布包冒烟检查：从包内入口启动 Desktop，确认相邻 Core 进程存在且身份为 `managed`，随后按精确包内路径回收测试进程。
+- 新增 Codex global MCP 发现与受 Bearer 保护的显式注册，发现、注册、连接、能力读取、启用和可加载状态继续保持独立。
+
+### Changed
+
+- Runtime、Desktop 前端、Wails 产品和发布包统一使用 `v0.1.9`。
+- 保留 `v0.1.7` 引入的恢复基线、MCP 发现、状态诚实性和 Windows 图标能力；其历史验证记录继续保留在下方未发布快照章节。
+
+### Verification
+
+- `go test -race ./... -count=1`、`go vet ./...` 和 `go build ./...` 通过。
+- `npm run check`、47 项前端测试和 `npm run build` 通过。
+- `wails build -m -nosyncgomod -clean -s -nocolour` 生产构建通过。
+- Harness `adc63ca` 与 Core 本地集成提交 `d8261c7` 生成干净 `release-candidate` 包；Core bundle SHA-256 与 `release.json` 一致。
+- 发布包内 Desktop 冒烟通过：相邻 Core 被识别为 `managed`，测试结束后未遗留 Desktop 或 Core 进程。
+
+### Known limitations
+
+- 当前交付物是免安装目录和 ZIP，不包含安装器、代码签名、自动更新或 Core 补丁回滚。
+- Core 发布同步仍未关闭；本次候选固定到本地集成提交 `d8261c7`，不能表述为该环境已有包含全部修复的正式 Core 发布包。
+- MCP 新增、编辑、移除、Registry 持久化和重启恢复仍属于 `v0.2.0`。
+
+## [v0.1.7] - 2026-11-03 — 未单独发布的开发快照
 
 ### Added
 

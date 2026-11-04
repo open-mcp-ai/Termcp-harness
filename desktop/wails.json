@@ -12,7 +12,7 @@
   "info": {
     "companyName": "open-mcp-ai",
     "productName": "Termcp Harness",
-    "productVersion": "0.1.7",
+    "productVersion": "0.1.9",
     "copyright": "Copyright © 2026 open-mcp-ai contributors",
     "comments": "Headless-compatible MCP runtime workspace"
   }

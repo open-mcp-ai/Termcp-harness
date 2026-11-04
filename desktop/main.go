@@ -23,7 +23,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const version = "v0.1.7"
+const version = "v0.1.9"
 
 func main() {
 	endpoint := flag.String(

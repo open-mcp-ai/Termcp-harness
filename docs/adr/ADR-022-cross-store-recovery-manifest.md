@@ -70,7 +70,7 @@ Event Journal、Agent Session 和 Approval History 使用独立文件。每个 S
 
 ## 8. Deferred：Runtime 活动锁
 
-- 状态：**Deferred（2026-11-03）**，不阻塞当前 `v0.1.7` 开发快照。
+- 状态：**Deferred（2026-11-03）**，不阻塞当前 `v0.1.9` 开发快照。
 - 风险：`recovery status` 与 `recovery rebaseline` 从读取 Store 到写入清单之间没有跨进程互斥；若 Runtime 同时运行，可能把不同时刻的文件状态记录成新的 `complete` 基线。它不会直接损坏 Store，也不会触发自动恢复，但会产生错误的恢复信心。
 - 计划方案：Runtime 配置恢复清单时持有 manifest 旁的 OS 活动锁，从加载持久化 Store 起保持到停止时清单更新完成；`recovery rebaseline` 非阻塞获取同一锁，失败时拒绝读取后继续写入；`recovery status` 发现活动锁时明确返回运行中警告，不把结果当作稳定代次。
 - 验收：两个独立进程竞争同一清单时只有一个获得活动权；Windows 与 POSIX 均覆盖；进程崩溃后锁可释放且不会依赖过期 PID 文件；`rebaseline` 在 Runtime 运行时拒绝写入且保留旧清单；`status` 不误报 `complete`。
