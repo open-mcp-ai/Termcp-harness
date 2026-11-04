@@ -16,11 +16,11 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享终端工作台*
 
 ## 界面预览
 
-| Runtime 在线 | Runtime 断线后的最后已知状态 |
+| Agent Runtime 工作区 | Core Sessions 只读观察 |
 | --- | --- |
-| ![Termcp Harness Runtime 在线](docs/assets/desktop/workspace-connected.jpg) | ![Termcp Harness Runtime 断线](docs/assets/desktop/workspace-disconnected.jpg) |
+| ![Termcp Harness v0.1.10 Agent Runtime 工作区](docs/assets/desktop/workspace-v0.1.10.png) | ![Termcp Harness v0.1.10 Core Sessions 面板](docs/assets/desktop/workspace-core-sessions-v0.1.10.png) |
 
-界面把本地事件顺序、MCP 来源、Core 身份、Session、审批和 Terminal 放在同一个 Workspace 中。断线时保留最后快照，但明确标记为状态未知，不把旧数据冒充当前事实。
+界面把本地事件顺序、MCP 来源、Core 身份、Session、审批和 Terminal 放在同一个 Workspace 中，并可通过公开只读接口观察 Core 中已有的 Session。断线时保留最后快照，但明确标记为状态未知，不把旧数据冒充当前事实。
 
 ## 当前能力
 
