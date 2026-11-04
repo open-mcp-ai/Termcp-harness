@@ -17,13 +17,14 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
 	"github.com/open-mcp-ai/termcp-harness/internal/corebundle"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreservice"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtimeapp"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
 
-var version = "v0.1.9"
+var version = "v0.1.10"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -514,15 +515,17 @@ func parseApprovalDecision(raw string) (approval.Decision, error) {
 
 func runCore(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: termcp-harness core <identify|bundle>")
+		return errors.New("usage: termcp-harness core <identify|bundle|service>")
 	}
 	switch args[0] {
 	case "identify":
 		return runCoreIdentify(ctx, args[1:], stdout, stderr)
 	case "bundle":
 		return runCoreBundle(args[1:], stdout, stderr)
+	case "service":
+		return runCoreService(ctx, args[1:], stdout, stderr)
 	default:
-		return errors.New("usage: termcp-harness core <identify|bundle>")
+		return errors.New("usage: termcp-harness core <identify|bundle|service>")
 	}
 }
 
@@ -575,6 +578,108 @@ func runCoreBundle(args []string, stdout, stderr io.Writer) error {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(bundle.Manifest)
+}
+
+func runCoreService(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: termcp-harness core service <install|start|status|stop>")
+	}
+	defaultProfile, err := coreservice.DefaultProfilePath()
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "install":
+		flags := flag.NewFlagSet("core service install", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		binary := flags.String("binary", "", "prebuilt Core executable; defaults to the adjacent Core bundle")
+		profilePath := flags.String("profile", defaultProfile, "Core service profile path")
+		endpoint := flags.String("endpoint", coreservice.DefaultEndpoint(), "fixed loopback Core HTTP origin")
+		dataDir := flags.String("data-dir", "", "persistent Core data directory; defaults to ~/.termcp")
+		authTokenFile := flags.String("auth-token-file", "", "optional file containing the Core bearer token")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return fmt.Errorf("unexpected arguments: %v", flags.Args())
+		}
+		binaryPath := strings.TrimSpace(*binary)
+		if binaryPath == "" {
+			bundleDir, configured, discoverErr := corebundle.Discover("")
+			if discoverErr != nil {
+				return discoverErr
+			}
+			if !configured {
+				return errors.New("--binary is required when no adjacent Core bundle exists")
+			}
+			bundle, loadErr := corebundle.Load(bundleDir)
+			if loadErr != nil {
+				return loadErr
+			}
+			binaryPath = bundle.BinaryPath
+		}
+		if strings.TrimSpace(*dataDir) == "" {
+			*dataDir, err = coreservice.DefaultDataDir()
+			if err != nil {
+				return err
+			}
+		}
+		coreVersion, digest, err := coreservice.InspectBinary(ctx, binaryPath)
+		if err != nil {
+			return err
+		}
+		saved, err := coreservice.SaveProfile(*profilePath, coreservice.Profile{
+			Schema:          coreservice.ProfileSchema,
+			BinaryPath:      binaryPath,
+			ExpectedVersion: coreVersion,
+			BinarySHA256:    digest,
+			Endpoint:        *endpoint,
+			DataDir:         *dataDir,
+			AuthTokenFile:   *authTokenFile,
+		})
+		if err != nil {
+			return err
+		}
+		return encodeJSON(stdout, saved)
+	case "start", "status", "stop":
+		flags := flag.NewFlagSet("core service "+args[0], flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		profilePath := flags.String("profile", defaultProfile, "Core service profile path")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return fmt.Errorf("unexpected arguments: %v", flags.Args())
+		}
+		profile, present, err := coreservice.LoadProfile(*profilePath)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return fmt.Errorf("Core service profile not found: %s", *profilePath)
+		}
+		switch args[0] {
+		case "start":
+			snapshot, err := coreservice.Start(ctx, profile)
+			if err != nil {
+				return err
+			}
+			return encodeJSON(stdout, snapshot)
+		case "status":
+			snapshot, err := coreservice.Status(ctx, profile)
+			if err != nil {
+				return err
+			}
+			return encodeJSON(stdout, snapshot)
+		default:
+			if err := coreservice.Stop(ctx, profile); err != nil {
+				return err
+			}
+			return encodeJSON(stdout, map[string]bool{"stopped": true})
+		}
+	default:
+		return errors.New("usage: termcp-harness core service <install|start|status|stop>")
+	}
 }
 
 func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) error {

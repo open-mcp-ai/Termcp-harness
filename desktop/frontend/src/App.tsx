@@ -61,6 +61,7 @@ import {
   ActivityPanel,
   AgentPanel,
   ApprovalsPanel,
+  CoreSessionsPanel,
   DiagnosticsPanel,
   MCPPanel,
   SessionsPanel,
@@ -1058,6 +1059,8 @@ export default function App() {
             stale={stale}
           />
         );
+      case "core-sessions":
+        return <CoreSessionsPanel data={data} stale={stale} />;
       case "mcp":
         return (
           <MCPPanel
@@ -1634,8 +1637,9 @@ export default function App() {
             <span className="exit-dialog-kicker">Termcp Harness</span>
             <h2 id="exit-dialog-title">要退出，还是最小化到任务栏？</h2>
             <p id="exit-dialog-description">
-              最小化会保留 Harness Runtime、Termcp Core 和正在执行的任务。退出会停止本次 Harness
-              拥有的 Runtime 与 Core 子进程；已派发的工具结果仍可能未知。
+              {data?.core.core?.ownership === "external"
+                ? "最小化会保留 Harness Runtime 和正在执行的任务。退出只停止 Harness Runtime，不会停止外部 Core 或它维护的 Session。"
+                : "最小化会保留 Harness Runtime、Termcp Core 和正在执行的任务。退出会停止本次 Harness 拥有的 Runtime 与 Core 子进程；已派发的工具结果仍可能未知。"}
             </p>
             <div className="exit-dialog-actions">
               <button

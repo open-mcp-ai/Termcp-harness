@@ -113,7 +113,7 @@ d8261c7 (approval correlation + terminal watch cursor)
 示例：
 
 ```text
-Harness v0.1.9+core.termcp-v0.2.8.d8261c7
+Harness v0.1.10+core.termcp-v0.2.8.d8261c7
 ```
 
 至少记录：

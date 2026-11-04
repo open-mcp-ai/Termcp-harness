@@ -18,37 +18,38 @@ type Config struct {
 	Logger     *slog.Logger
 	Cleanup    func()
 
-	MCPEndpoint         string
-	MCPConfigFile       string
-	MCPTransport        mcpcontrol.TransportKind
-	MCPID               string
-	MCPName             string
-	MCPEnable           bool
-	MCPAuthTokenFile    string
-	MCPStdioCommand     string
-	MCPStdioWorkDir     string
-	MCPStdioArgs        []string
-	MCPReconnectMin     time.Duration
-	MCPReconnectMax     time.Duration
-	MCPHealthInterval   time.Duration
-	CoreEndpoint        string
-	CoreBundleDir       string
-	CoreDataDir         string
-	CoreLogPath         string
-	CoreStartTimeout    time.Duration
-	CoreNoInternal      bool
-	ApprovalTokenFile   string
-	ApprovalToken       string
-	ApprovalStoreFile   string
-	ToolPolicyFile      string
-	ModelEndpoint       string
-	ModelID             string
-	ModelTokenFile      string
-	ModelTimeout        time.Duration
-	ModelMaxOutputToken int
-	EventLogFile        string
-	SessionStoreFile    string
-	RecoveryManifest    string
+	MCPEndpoint                string
+	MCPConfigFile              string
+	MCPTransport               mcpcontrol.TransportKind
+	MCPID                      string
+	MCPName                    string
+	MCPEnable                  bool
+	MCPAuthTokenFile           string
+	MCPStdioCommand            string
+	MCPStdioWorkDir            string
+	MCPStdioArgs               []string
+	MCPReconnectMin            time.Duration
+	MCPReconnectMax            time.Duration
+	MCPHealthInterval          time.Duration
+	CoreEndpoint               string
+	CoreBundleDir              string
+	DisableCoreBundleDiscovery bool
+	CoreDataDir                string
+	CoreLogPath                string
+	CoreStartTimeout           time.Duration
+	CoreNoInternal             bool
+	ApprovalTokenFile          string
+	ApprovalToken              string
+	ApprovalStoreFile          string
+	ToolPolicyFile             string
+	ModelEndpoint              string
+	ModelID                    string
+	ModelTokenFile             string
+	ModelTimeout               time.Duration
+	ModelMaxOutputToken        int
+	EventLogFile               string
+	SessionStoreFile           string
+	RecoveryManifest           string
 }
 
 func (c Config) defaults() Config {

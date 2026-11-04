@@ -42,6 +42,7 @@ export type ModuleId =
   | "agent"
   | "approvals"
   | "terminal"
+  | "core-sessions"
   | "mcp"
   | "activity"
   | "diagnostics";
@@ -113,6 +114,14 @@ export const moduleDefinitions: ModuleDefinition[] = [
     minW: 4,
     minH: 5,
     contextScope: "session",
+  },
+  {
+    id: "core-sessions",
+    title: "Core Sessions",
+    description: "发现 Core 中已有的 Session，并在 Harness Agent 之外直接观察仍运行的 Shell。",
+    minW: 5,
+    minH: 6,
+    contextScope: "global",
   },
   {
     id: "mcp",

@@ -4,6 +4,26 @@ Termcp Harness 的重要功能与架构变更记录。
 
 当前版本在 `dev` 分支持续迭代，不承诺跨版本兼容。版本号采用语义化版本的基础形式，每次可独立验收的功能里程碑递增补丁号。
 
+## [v0.1.10] - 2026-11-05
+
+`v0.1.10` 是 `v0.1.9` 之后的后向兼容能力更新；`v0.2.0` 继续保留给 MCP 注册表写入生命周期。
+
+### Added
+
+- 新增持久本地 Core profile 和 `core service install/start/status/stop`，Core 可由公开 daemon 命令独立运行；Harness 将其识别为 external，退出时不停止。
+- 新增 `GET /v1/core/sessions` 和 Desktop Core Sessions 面板，可发现 Harness 启动前由其他 Termcp 客户端创建的 Session，并在验证 running Shell 后直接观察终端。
+- 新增迟附着验证：外部创建 Session 后启动 Harness，清单可见；Harness 停止后 Core 与 Session 继续存在。
+
+### Changed
+
+- 退出确认框改为窗口居中模态，并在小窗口中限制高度和允许内部滚动；外部 Core 模式下提示退出只停止 Harness Runtime。
+
+### Known limitations
+
+- 尚无 Windows Service、登录自启动、托盘控制或 Core 崩溃自动重启。
+- Core 重启后的 DEAD Session 可出现在清单中，但完整只读历史终端视图尚未实现。
+- 外部 Agent 的模型 transcript、Harness 工具策略和审批历史不能从 Core 日志反推。
+
 ## [v0.1.9] - 2026-11-04
 
 `v0.1.9` 是 `v0.1.6` 之后首个计划实际发布的累积版本。`v0.1.7` 仅为未单独打 tag 的开发快照，`v0.1.8` 未形成单独快照；这两个版本号不得表述为已发布 tag。

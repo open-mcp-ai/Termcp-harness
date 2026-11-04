@@ -14,6 +14,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/agentsession"
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinventory"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpdiscovery"
@@ -44,6 +45,7 @@ type handlerOptions struct {
 	mcp           MCPLister
 	mcpDiscovery  MCPDiscovery
 	core          CoreReader
+	coreSessions  CoreSessionLister
 	approvals     ApprovalLister
 	decider       ApprovalDecider
 	refresher     ApprovalExecutionRefresher
@@ -106,6 +108,16 @@ type CoreReader interface {
 func WithCore(manager CoreReader) Option {
 	return func(options *handlerOptions) {
 		options.core = manager
+	}
+}
+
+type CoreSessionLister interface {
+	List(context.Context) (coreinventory.Snapshot, error)
+}
+
+func WithCoreSessions(lister CoreSessionLister) Option {
+	return func(options *handlerOptions) {
+		options.coreSessions = lister
 	}
 }
 
@@ -381,6 +393,23 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 			}
 		}
 		writeJSON(w, http.StatusOK, response)
+	})
+	mux.HandleFunc("GET /v1/core/sessions", func(w http.ResponseWriter, request *http.Request) {
+		if config.coreSessions == nil {
+			writeJSON(w, http.StatusOK, coreinventory.Snapshot{Sessions: []coreinventory.Session{}})
+			return
+		}
+		listContext, cancel := context.WithTimeout(request.Context(), 10*time.Second)
+		defer cancel()
+		snapshot, err := config.coreSessions.List(listContext)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "Core session inventory is unavailable"})
+			return
+		}
+		if snapshot.Sessions == nil {
+			snapshot.Sessions = []coreinventory.Session{}
+		}
+		writeJSON(w, http.StatusOK, snapshot)
 	})
 	mux.HandleFunc("GET /v1/approvals", func(w http.ResponseWriter, _ *http.Request) {
 		response := approvalsResponse{

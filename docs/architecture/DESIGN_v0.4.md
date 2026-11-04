@@ -98,7 +98,7 @@ Terminal Workspace 不是：
 - 唯一控制入口。
 - 完整 SSH 管理器的自动复制品。
 
-当前已建立 Wails + React/TypeScript Desktop Shell，可读取 Runtime、Agent Session、审批、Core 身份、MCP 注册和事件窗口，并可在 token 仅驻留 Go 内存时提交审批决定；终端流已接入，安装包与 Core 补丁分发尚未完成。Desktop 默认在 Wails 单实例检查后的 `OnStartup` 中内嵌启动 Harness Runtime，Runtime 再启动可执行文件旁固定 bundle 的 Core；用户关闭窗口时选择继续最小化或确认退出，只有确认退出才按所有权停止 Runtime/Core。`--runtime` 保留为外部 Headless Runtime 模式。Core 仍是独立子进程，Harness 不 import Core 内部包。Core 面板展示 external/managed/unverified 所有权、PID、启动时间和实例键，详见 `docs/contracts/harness/v0.1/core-instance.md` 与 `docs/contracts/harness/v0.1/desktop-shell.md`。
+当前已建立 Wails + React/TypeScript Desktop Shell，可读取 Runtime、Agent Session、审批、Core 身份、Core Session 清单、MCP 注册和事件窗口，并可在 token 仅驻留 Go 内存时提交审批决定；终端流已接入，安装包与 Core 补丁分发尚未完成。Desktop 默认在 Wails 单实例检查后的 `OnStartup` 中内嵌启动 Harness Runtime，Runtime 再启动可执行文件旁固定 bundle 的 Core；用户关闭窗口时选择继续最小化或确认退出，只有确认退出才按所有权停止 Runtime/Core。`--runtime` 保留为外部 Headless Runtime 模式。新增持久本地 Core profile 后，Core 由其公开 daemon 命令独立运行，Harness 通过 external 绑定迟附着，退出时不停止 Core；Core Sessions 面板可以发现其他 Agent 已创建的 Session，但只复用真实 Core 执行现场，不伪造外部 Agent transcript。Core 仍是独立子进程，Harness 不 import Core 内部包。Core 面板展示 external/managed/unverified 所有权、PID、启动时间和实例键，详见 `docs/contracts/harness/v0.1/core-instance.md`、`docs/adr/ADR-023-persistent-core-late-attach.md` 与 `docs/contracts/harness/v0.1/desktop-shell.md`。
 
 Harness 当前通过 `/api/version` 和 `/api/daemon` 识别 Core，以端点、PID、启动时间和版本生成实例键。端点可达不等于取得进程所有权；受管绑定必须与 Harness 启动时记录的 PID 和启动时间匹配。端口、PID 或版本中的单项都不能作为长期身份。
 

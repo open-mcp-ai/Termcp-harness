@@ -60,11 +60,12 @@ type Shell struct {
 }
 
 type OpenOptions struct {
-	AgentSessionID string
-	CoreSessionID  string
-	ShellID        string
-	Rows           int
-	Cols           int
+	AgentSessionID  string
+	CoreSessionID   string
+	ShellID         string
+	Rows            int
+	Cols            int
+	ObservationOnly bool
 }
 
 type OpenResult struct {
@@ -221,7 +222,8 @@ func (m *Manager) Open(ctx context.Context, endpoint string, options OpenOptions
 	options.AgentSessionID = strings.TrimSpace(options.AgentSessionID)
 	options.CoreSessionID = strings.TrimSpace(options.CoreSessionID)
 	options.ShellID = strings.TrimSpace(options.ShellID)
-	if options.AgentSessionID == "" || options.CoreSessionID == "" || options.ShellID == "" {
+	if (!options.ObservationOnly && options.AgentSessionID == "") ||
+		options.CoreSessionID == "" || options.ShellID == "" {
 		return OpenResult{}, fmt.Errorf("%w: Agent Session, Core Session, and Shell IDs are required", ErrInvalidTarget)
 	}
 	if options.Rows < 1 || options.Rows > 1000 || options.Cols < 1 || options.Cols > 2000 {

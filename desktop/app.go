@@ -14,6 +14,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/agentsession"
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinventory"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreterminal"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventstream"
@@ -251,6 +252,12 @@ func (a *App) AgentSessionTranscript(
 	return a.client.AgentSessionTranscript(ctx, id, a.approvalToken)
 }
 
+func (a *App) CoreSessions() (coreinventory.Snapshot, error) {
+	ctx, cancel := a.operationContext(10 * time.Second)
+	defer cancel()
+	return a.client.CoreSessions(ctx)
+}
+
 type ModelLoopLaunchResult struct {
 	AgentSessionID string                           `json:"agent_session_id"`
 	Session        agentsession.Snapshot            `json:"session"`
@@ -391,6 +398,34 @@ func (a *App) TerminalShells(agentSessionID string) (TerminalShellsResult, error
 	}, nil
 }
 
+func (a *App) CoreTerminalShells(coreSessionID string) (TerminalShellsResult, error) {
+	if a.client == nil {
+		return TerminalShellsResult{}, errors.New("control client is required")
+	}
+	coreSessionID = strings.TrimSpace(coreSessionID)
+	if coreSessionID == "" || len(coreSessionID) > 256 {
+		return TerminalShellsResult{}, errors.New("Core Session ID is required")
+	}
+	ctx, cancel := a.operationContext(10 * time.Second)
+	defer cancel()
+	core, err := a.client.Core(ctx)
+	if err != nil {
+		return TerminalShellsResult{}, fmt.Errorf("read Core identity: %w", err)
+	}
+	if !core.Configured || core.Core == nil || core.Core.State != "identified" {
+		return TerminalShellsResult{}, errors.New("Core is not identified")
+	}
+	shells, err := a.terminals.Shells(ctx, core.Core.Endpoint, coreSessionID)
+	if err != nil {
+		return TerminalShellsResult{}, fmt.Errorf("read Core Session shells: %w", err)
+	}
+	return TerminalShellsResult{
+		AgentSessionID: "",
+		CoreSessionID:  coreSessionID,
+		Shells:         shells,
+	}, nil
+}
+
 func (a *App) TerminalOpen(
 	agentSessionID string,
 	shellID string,
@@ -420,6 +455,45 @@ func (a *App) TerminalOpen(
 		ShellID:        shellID,
 		Rows:           rows,
 		Cols:           cols,
+	})
+}
+
+func (a *App) OpenCoreTerminal(
+	coreSessionID string,
+	shellID string,
+	rows int,
+	cols int,
+) (coreterminal.OpenResult, error) {
+	selected, err := a.CoreTerminalShells(coreSessionID)
+	if err != nil {
+		return coreterminal.OpenResult{}, err
+	}
+	shellID = strings.TrimSpace(shellID)
+	found := false
+	for _, shell := range selected.Shells {
+		if shell.ID == shellID {
+			found = shell.Status == "running"
+			break
+		}
+	}
+	if !found {
+		return coreterminal.OpenResult{}, errors.New("Shell is not a running child of the selected Core Session")
+	}
+	ctx, cancel := a.operationContext(25 * time.Second)
+	defer cancel()
+	core, err := a.client.Core(ctx)
+	if err != nil {
+		return coreterminal.OpenResult{}, fmt.Errorf("read Core identity: %w", err)
+	}
+	if !core.Configured || core.Core == nil || core.Core.State != "identified" {
+		return coreterminal.OpenResult{}, errors.New("Core is not identified")
+	}
+	return a.terminals.Open(ctx, core.Core.Endpoint, coreterminal.OpenOptions{
+		CoreSessionID:   strings.TrimSpace(coreSessionID),
+		ShellID:         shellID,
+		Rows:            rows,
+		Cols:            cols,
+		ObservationOnly: true,
 	})
 }
 

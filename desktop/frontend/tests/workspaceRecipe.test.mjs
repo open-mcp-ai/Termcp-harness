@@ -48,6 +48,26 @@ test("isolates a damaged panel instead of rejecting the whole recipe", () => {
   assert.match(parsed.warnings[0], /第 1 个面板/);
 });
 
+test("preserves the global Core Sessions panel", () => {
+  const parsed = parseWorkspaceRecipe(JSON.stringify({
+    format: WORKSPACE_RECIPE_FORMAT,
+    version: WORKSPACE_RECIPE_VERSION,
+    workspace: "daily",
+    layout: [{
+      id: "panel-core-sessions-1",
+      moduleId: "core-sessions",
+      x: 0,
+      y: 0,
+      w: 6,
+      h: 6,
+    }],
+  }));
+
+  assert.equal(parsed.recipe.layout.length, 1);
+  assert.equal(parsed.recipe.layout[0].moduleId, "core-sessions");
+  assert.deepEqual(parsed.warnings, []);
+});
+
 test("drops duplicate modules and repairs invalid pinned context", () => {
   const layout = defaultWorkspaceLayout("daily");
   const agent = layout.find((panel) => panel.moduleId === "agent");

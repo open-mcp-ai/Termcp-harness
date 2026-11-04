@@ -5,6 +5,7 @@ import type {
   AgentSessionSnapshot,
   AgentSessionTranscript,
   Bootstrap,
+  CoreSessionsState,
   DesktopBridge,
   EventWindow,
   EventStreamPollResult,
@@ -106,6 +107,14 @@ export async function loadTerminalShells(agentSessionId: string): Promise<Termin
   return bridge().TerminalShells(agentSessionId);
 }
 
+export async function loadCoreSessions(): Promise<CoreSessionsState> {
+  return bridge().CoreSessions();
+}
+
+export async function loadCoreTerminalShells(coreSessionId: string): Promise<TerminalShellsResult> {
+  return bridge().CoreTerminalShells(coreSessionId);
+}
+
 export async function openTerminal(
   agentSessionId: string,
   shellId: string,
@@ -113,6 +122,15 @@ export async function openTerminal(
   cols: number,
 ): Promise<TerminalOpenResult> {
   return bridge().TerminalOpen(agentSessionId, shellId, rows, cols);
+}
+
+export async function openCoreTerminal(
+  coreSessionId: string,
+  shellId: string,
+  rows: number,
+  cols: number,
+): Promise<TerminalOpenResult> {
+  return bridge().OpenCoreTerminal(coreSessionId, shellId, rows, cols);
 }
 
 export async function pollTerminal(id: string): Promise<TerminalPollResult> {

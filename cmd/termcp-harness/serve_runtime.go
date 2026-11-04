@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-mcp-ai/termcp-harness/internal/coreservice"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtimeapp"
 )
@@ -32,6 +33,7 @@ func runRuntimeApp(ctx context.Context, args []string, stderr io.Writer) error {
 	mcpHealthInterval := flags.Duration("mcp-health-interval", 30*time.Second, "MCP health check interval")
 	coreEndpoint := flags.String("core-endpoint", "", "Core HTTP origin for instance identity")
 	coreBundleDir := flags.String("core-bundle", "", "directory containing manifest.json and a prebuilt Core binary")
+	coreServiceProfile := flags.String("core-service-profile", "", "standalone Core service profile; defaults to the user profile when present")
 	coreDataDir := flags.String("core-data-dir", "", "persistent data directory for bundled Core")
 	coreLogPath := flags.String("core-log", "", "bundled Core log path")
 	coreStartTimeout := flags.Duration("core-start-timeout", 20*time.Second, "bundled Core readiness timeout")
@@ -66,7 +68,18 @@ func runRuntimeApp(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("--recovery-manifest-file requires at least one persistent store file")
 	}
 
-	return runtimeapp.Run(ctx, runtimeapp.Config{
+	profile, profileConfigured, err := coreservice.LoadProfile(*coreServiceProfile)
+	if err != nil {
+		return err
+	}
+	if !profileConfigured && strings.TrimSpace(*coreServiceProfile) != "" {
+		return fmt.Errorf("Core service profile not found: %s", *coreServiceProfile)
+	}
+	if profileConfigured && (*coreEndpoint != "" || *coreBundleDir != "" || *mcpEndpoint != "" ||
+		*mcpStdioCommand != "") {
+		return fmt.Errorf("--core-service-profile cannot be combined with another Core or MCP endpoint")
+	}
+	config := runtimeapp.Config{
 		Version:             version,
 		ListenAddr:          *listenAddress,
 		LogWriter:           stderr,
@@ -100,5 +113,18 @@ func runRuntimeApp(ctx context.Context, args []string, stderr io.Writer) error {
 		EventLogFile:        *eventLogFile,
 		SessionStoreFile:    *sessionStoreFile,
 		RecoveryManifest:    *recoveryManifestFile,
-	})
+	}
+	if profileConfigured {
+		startContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err = coreservice.Start(startContext, profile)
+		cancel()
+		if err != nil {
+			return err
+		}
+		config.CoreEndpoint = profile.Endpoint
+		config.MCPEndpoint = profile.Endpoint + "/stream"
+		config.MCPAuthTokenFile = profile.AuthTokenFile
+		config.DisableCoreBundleDiscovery = true
+	}
+	return runtimeapp.Run(ctx, config)
 }

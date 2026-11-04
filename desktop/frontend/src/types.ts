@@ -331,6 +331,24 @@ export interface AgentSessionsState {
   sessions: AgentSessionSnapshot[];
 }
 
+export interface CoreSessionSnapshot {
+  id: string;
+  name?: string;
+  status: string;
+  rows?: number;
+  cols?: number;
+  ssh_endpoint?: string;
+  ssh_config?: string;
+  namespace?: string;
+  created_at?: number;
+}
+
+export interface CoreSessionsState {
+  configured: boolean;
+  total: number;
+  sessions: CoreSessionSnapshot[];
+}
+
 export interface AgentCallSummary {
   call_id: string;
   status: ToolCallStatus;
@@ -462,6 +480,9 @@ export interface DesktopBridge {
   ResumeModelLoop(agentSessionId: string): Promise<ModelLoopLaunchResult>;
   CancelAgentSession(id: string, expectedRevision: number): Promise<{ session: AgentSessionSnapshot }>;
   AgentSessionTranscript(id: string): Promise<{ transcript: AgentSessionTranscript }>;
+  CoreSessions(): Promise<CoreSessionsState>;
+  CoreTerminalShells(coreSessionId: string): Promise<TerminalShellsResult>;
+  OpenCoreTerminal(coreSessionId: string, shellId: string, rows: number, cols: number): Promise<TerminalOpenResult>;
   TerminalShells(agentSessionId: string): Promise<TerminalShellsResult>;
   TerminalOpen(agentSessionId: string, shellId: string, rows: number, cols: number): Promise<TerminalOpenResult>;
   TerminalPoll(id: string): Promise<TerminalPollResult>;

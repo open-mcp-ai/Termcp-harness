@@ -1,6 +1,7 @@
 package controlapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/agentsession"
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinventory"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
@@ -396,6 +398,48 @@ func TestAgentSessionsEndpointReportsUnconfigured(t *testing.T) {
 	}
 }
 
+func TestCoreSessionsEndpointListsBoundedMetadata(t *testing.T) {
+	handler := NewHandler(runningRuntime(t), WithCoreSessions(fakeCoreSessionLister{
+		snapshot: coreinventory.Snapshot{
+			Configured: true,
+			Total:      1,
+			Sessions: []coreinventory.Session{{
+				ID:        "core-session-1",
+				Name:      "pi",
+				Status:    "running",
+				SSHConfig: "pi",
+			}},
+		},
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/core/sessions", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var body coreinventory.Snapshot
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Configured || body.Total != 1 || body.Sessions[0].ID != "core-session-1" {
+		t.Fatalf("response = %+v", body)
+	}
+}
+
+func TestCoreSessionsEndpointReportsUnconfigured(t *testing.T) {
+	response := httptest.NewRecorder()
+	NewHandler(runningRuntime(t)).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/core/sessions", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var body coreinventory.Snapshot
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Configured || body.Total != 0 || body.Sessions == nil {
+		t.Fatalf("response = %+v", body)
+	}
+}
+
 type fakeApprovalLister struct {
 	approvals []approval.Tracked
 	err       error
@@ -416,6 +460,15 @@ func (f fakeApprovalLister) List() ([]approval.Tracked, error) {
 
 type fakeSessionLister struct {
 	sessions []agentsession.Snapshot
+}
+
+type fakeCoreSessionLister struct {
+	snapshot coreinventory.Snapshot
+	err      error
+}
+
+func (f fakeCoreSessionLister) List(context.Context) (coreinventory.Snapshot, error) {
+	return f.snapshot, f.err
 }
 
 func (f fakeSessionLister) List() []agentsession.Snapshot {

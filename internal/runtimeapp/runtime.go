@@ -17,6 +17,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/coreapproval"
 	"github.com/open-mcp-ai/termcp-harness/internal/corebundle"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinventory"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreprocess"
 	"github.com/open-mcp-ai/termcp-harness/internal/daemon"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
@@ -321,9 +322,13 @@ func runServer(
 	serveContext, cancelServe := context.WithCancel(ctx)
 	defer cancelServe()
 
-	bundleDir, bundleConfigured, err := corebundle.Discover(config.CoreBundleDir)
-	if err != nil {
-		return err
+	bundleDir := ""
+	bundleConfigured := false
+	if !config.DisableCoreBundleDiscovery {
+		bundleDir, bundleConfigured, err = corebundle.Discover(config.CoreBundleDir)
+		if err != nil {
+			return err
+		}
 	}
 	resolvedCoreEndpoint := strings.TrimSpace(config.CoreEndpoint)
 	resolvedMCPEndpoint := strings.TrimSpace(config.MCPEndpoint)
@@ -484,6 +489,13 @@ func runServer(
 		controlapi.WithCore(coreManager),
 		controlapi.WithAgentSessions(agentSessions),
 		controlapi.WithAgentSessionTranscripts(agentSessions),
+	}
+	if resolvedCoreEndpoint != "" {
+		coreInventory, inventoryErr := coreinventory.NewClient(resolvedCoreEndpoint, coreAuthToken)
+		if inventoryErr != nil {
+			return fmt.Errorf("configure Core session inventory: %w", inventoryErr)
+		}
+		controlOptions = append(controlOptions, controlapi.WithCoreSessions(coreInventory))
 	}
 	var approvalCoordinator *approval.Coordinator
 	if resolvedCoreEndpoint != "" {

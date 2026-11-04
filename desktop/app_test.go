@@ -600,6 +600,16 @@ func TestAppRejectsExitedShellForLiveTerminal(t *testing.T) {
 	app := newApp(client, "")
 	app.ctx = context.Background()
 	defer app.shutdown(context.Background())
+	shells, err := app.CoreTerminalShells("core-1")
+	if err != nil {
+		t.Fatalf("CoreTerminalShells() error = %v", err)
+	}
+	if len(shells.Shells) != 1 || shells.Shells[0].Status != "exited" {
+		t.Fatalf("Core shells = %+v", shells)
+	}
+	if _, err := app.OpenCoreTerminal("core-1", "shell-1", 24, 80); err == nil {
+		t.Fatal("exited Shell was accepted for external Core terminal")
+	}
 	if _, err := app.TerminalOpen("agent-1", "shell-1", 24, 80); err == nil {
 		t.Fatal("exited Shell was accepted for live terminal")
 	}

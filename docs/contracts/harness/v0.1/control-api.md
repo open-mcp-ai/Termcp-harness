@@ -99,6 +99,18 @@ Runtime 处于 `running` 时返回 `200`，其他生命周期状态返回 `503`�
 
 该端点只证明 Harness 基于公开契约观察到的实例身份；`ownership=external` 表示不拥有 Core 进程，不得据此停止进程。
 
+## `GET /v1/core/sessions`
+
+只读返回 Core 当前公开列出的 Session 元数据。未配置 Core Session inventory 时返回：
+
+```json
+{"configured":false,"total":0,"sessions":[]}
+```
+
+已配置时最多接受 1000 个 Session、1 MiB 响应。每项只包含 `id`、`name`、`status`、`rows`、`cols`、`ssh_endpoint`、`ssh_config`、`namespace` 和 `created_at`；不返回 SSH 凭据、Core token、私有数据目录或文件路径。
+
+该端点不把 Core Session 登记为 Harness Agent Session，也不证明外部 Agent 的 transcript、工具策略或审批历史。Desktop 必须通过固定桥读取该清单；浏览器不能获得 Core 地址、token 或通用 HTTP 能力。
+
 ## `GET /v1/mcp/servers`
 
 返回当前已注册 MCP Server 的连接、能力、启用、所有权和派生 `ready` 状态。注册、连接和能力读取不是同一状态，具体语义见 `mcp-server-states.md`。

@@ -8,7 +8,10 @@ import {
   desktopAvailable,
   discoverMCP,
   loadAgentSessionTranscript,
+  loadCoreTerminalShells,
+  loadCoreSessions,
   loadTerminalShells,
+  openCoreTerminal,
   openTerminal,
   pollTerminal,
   reconcileApproval,
@@ -51,6 +54,7 @@ import type {
   ApprovalDecisionResult,
   ApprovalStatus,
   Bootstrap,
+  CoreSessionSnapshot,
   HarnessEvent,
   ModelLoopLaunchResult,
   MCPDiscoverySnapshot,
@@ -942,10 +946,12 @@ function terminalStateLabel(state: TerminalState): string {
 
 function TerminalView({
   agentSessionId,
+  coreSessionId,
   shell,
   stale,
 }: {
-  agentSessionId: string;
+  agentSessionId?: string;
+  coreSessionId?: string;
   shell: TerminalShell;
   stale: boolean;
 }) {
@@ -1057,7 +1063,12 @@ function TerminalView({
       }
     };
 
-    void openTerminal(agentSessionId, shell.id, terminal.rows, terminal.cols)
+    const opening = agentSessionId
+      ? openTerminal(agentSessionId, shell.id, terminal.rows, terminal.cols)
+      : coreSessionId
+        ? openCoreTerminal(coreSessionId, shell.id, terminal.rows, terminal.cols)
+        : Promise.reject(new Error("Terminal target is missing"));
+    void opening
       .then((result) => {
         if (disposed) {
           void closeTerminal(result.id).catch(() => undefined);
@@ -1090,7 +1101,7 @@ function TerminalView({
       if (bridgeID) void closeTerminal(bridgeID).catch(() => undefined);
       terminal.dispose();
     };
-  }, [agentSessionId, shell.id, generation]);
+  }, [agentSessionId, coreSessionId, shell.id, generation]);
 
   const activityText = activity === "ai"
     ? "Agent 正在输入"
@@ -1129,6 +1140,167 @@ function TerminalView({
         ref={hostRef}
         aria-label={`Core Terminal ${shell.name ?? shell.id}`}
       />
+    </div>
+  );
+}
+
+function CoreSessionsPanelView({
+  data,
+  stale,
+}: {
+  data: Bootstrap;
+  stale: boolean;
+}) {
+  const [sessions, setSessions] = useState<CoreSessionSnapshot[]>([]);
+  const [selectedSessionID, setSelectedSessionID] = useState(
+    "",
+  );
+  const [shells, setShells] = useState<TerminalShell[]>([]);
+  const [selectedShellID, setSelectedShellID] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await loadCoreSessions();
+      setSessions(next.sessions);
+      setSelectedSessionID((current) =>
+        next.sessions.some((session) => session.id === current)
+          ? current
+          : next.sessions.find((session) => session.status === "running")?.id ??
+            next.sessions[0]?.id ??
+            "",
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  useEffect(() => {
+    setShells([]);
+    setSelectedShellID("");
+    setError(null);
+    setCopied(false);
+    if (!selectedSessionID) return;
+    let cancelled = false;
+    setLoading(true);
+    void loadCoreTerminalShells(selectedSessionID)
+      .then((result) => {
+        if (cancelled) return;
+        setShells(result.shells);
+        setSelectedShellID(result.shells.find((shell) => shell.status === "running")?.id ?? "");
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSessionID]);
+
+  const selectedSession = sessions.find((session) => session.id === selectedSessionID);
+  const selectedShell = shells.find((shell) => shell.id === selectedShellID);
+
+  return (
+    <div className="canvas-module core-sessions-module">
+      {stale ? <p className="canvas-warning">{messages.agent.lastKnownNote}</p> : null}
+      <div className="core-sessions-head">
+        <div>
+          <strong>Core Session 清单</strong>
+          <span>{sessions.length} 个 Session · 仅使用 Core 公开只读接口</span>
+        </div>
+        <button type="button" disabled={loading} onClick={() => void refresh()}>
+          {loading ? "刷新中…" : "刷新"}
+        </button>
+      </div>
+      {error ? <div className="canvas-error" role="alert">{error}</div> : null}
+      {!data.core.core?.endpoint ? (
+        <p className="canvas-empty">Harness 尚未连接 Core。</p>
+      ) : sessions.length === 0 ? (
+        <p className="canvas-empty">Core 当前没有可读取的 Session。</p>
+      ) : (
+        <div className="core-sessions-layout">
+          <ul className="canvas-list core-session-list" aria-label="Core Session 清单">
+            {sessions.map((session) => (
+              <li key={session.id} className={session.id === selectedSessionID ? "is-selected" : ""}>
+                <button type="button" onClick={() => setSelectedSessionID(session.id)}>
+                  <div className="canvas-list-row">
+                    <strong title={session.id}>{session.name || shortID(session.id)}</strong>
+                    <span className={`state-badge ${session.status === "running" ? "ready" : "unknown"}`}>
+                      {session.status}
+                    </span>
+                  </div>
+                  <div className="canvas-meta">
+                    <span>{session.ssh_config || session.ssh_endpoint || messages.common.unknown}</span>
+                    <span>{session.namespace || "默认命名空间"}</span>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <section className="core-session-detail">
+            <div className="core-session-identity">
+              <div>
+                <span>Core Session</span>
+                <code title={selectedSession?.id}>{selectedSession?.id ?? messages.common.none}</code>
+              </div>
+              <button
+                type="button"
+                disabled={!selectedSession}
+                onClick={() => {
+                  if (!selectedSession) return;
+                  void navigator.clipboard
+                    .writeText(selectedSession.id)
+                    .then(() => setCopied(true))
+                    .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+                }}
+              >
+                {copied ? "已复制" : "复制给新 Agent"}
+              </button>
+            </div>
+            {selectedSession ? (
+              <>
+                <label className="core-session-shell-picker">
+                  <span>Shell</span>
+                  <select
+                    value={selectedShellID}
+                    onChange={(event) => setSelectedShellID(event.target.value)}
+                    disabled={loading || shells.length < 2}
+                  >
+                    {shells.length === 0 ? <option value="">未发现 running Shell</option> : null}
+                    {shells.map((shell) => (
+                      <option key={shell.id} value={shell.id} disabled={shell.status !== "running"}>
+                        {shell.index || "?"} · {shell.name || shortID(shell.id)} · {shell.status}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedShell ? (
+                  <TerminalView coreSessionId={selectedSession.id} shell={selectedShell} stale={stale} />
+                ) : (
+                  <p className="canvas-empty">
+                    {loading ? "正在读取 Shell…" : "没有可接入的 running Shell；DEAD Session 只保留历史输出。"}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="canvas-empty">选择一个 Core Session。</p>
+            )}
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -1535,6 +1707,7 @@ function DiagnosticsPanelView({ data, stale }: { data: Bootstrap; stale: boolean
 }
 
 export const SessionsPanel = memo(SessionsPanelView);
+export const CoreSessionsPanel = memo(CoreSessionsPanelView);
 export const AgentPanel = memo(AgentPanelView);
 export const ApprovalsPanel = memo(ApprovalsPanelView);
 export const TerminalPanel = memo(TerminalPanelView);

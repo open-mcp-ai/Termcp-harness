@@ -23,7 +23,7 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const version = "v0.1.9"
+const version = "v0.1.10"
 
 func main() {
 	endpoint := flag.String(
@@ -37,6 +37,11 @@ func main() {
 		"optional approval bearer token file when using an external Runtime",
 	)
 	coreBundle := flag.String("core-bundle", "", "optional bundled Core directory; defaults to <desktop-dir>/core")
+	coreServiceProfile := flag.String(
+		"core-service-profile",
+		os.Getenv("TERMCP_HARNESS_CORE_SERVICE_PROFILE"),
+		"optional standalone Core service profile; defaults to the user profile when present",
+	)
 	coreDataDir := flag.String("core-data-dir", "", "optional bundled Core data directory")
 	coreNoInternal := flag.Bool("core-no-internal", false, "disable bundled Core's built-in loopback SSH profile")
 	mcpConfigFile := flag.String("mcp-config-file", "", "optional additional MCP server configuration file")
@@ -57,6 +62,7 @@ func main() {
 	if endpointValue == "" {
 		options := embeddedRuntimeOptions{
 			CoreBundleDir:       *coreBundle,
+			CoreServiceProfile:  *coreServiceProfile,
 			CoreDataDir:         *coreDataDir,
 			CoreNoInternal:      *coreNoInternal,
 			MCPConfigFile:       *mcpConfigFile,

@@ -16,6 +16,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/agentsession"
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
+	"github.com/open-mcp-ai/termcp-harness/internal/coreinventory"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpdiscovery"
@@ -210,6 +211,17 @@ func (c *Client) Core(ctx context.Context) (CoreState, error) {
 		return CoreState{}, err
 	}
 	return state, nil
+}
+
+func (c *Client) CoreSessions(ctx context.Context) (coreinventory.Snapshot, error) {
+	if c == nil {
+		return coreinventory.Snapshot{}, errors.New("control client is required")
+	}
+	var snapshot coreinventory.Snapshot
+	if _, err := c.getJSON(ctx, "/v1/core/sessions", []int{http.StatusOK}, &snapshot); err != nil {
+		return coreinventory.Snapshot{}, err
+	}
+	return snapshot, nil
 }
 
 func (c *Client) DiscoverMCP(ctx context.Context) (mcpdiscovery.Snapshot, error) {

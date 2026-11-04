@@ -1,6 +1,6 @@
 # Terminal Workspace Shell v0.1（草案）
 
-> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察、异步模型任务启动、Agent 停止任务与人工接管、安全检查点人工恢复、持久化模型回复读取、审批决定、审批时间线、审批历史恢复、`waiting_execution` 恢复交互、Harness Canvas、多 Space 创建/切换/重命名/删除、Workspace Recipe v1 导入导出、跨 Workspace 布局复制、有界布局撤销/重做、真实 Core Terminal、Codex global MCP 发现与受保护注册、SSE 实时事件订阅、同 Runtime 实例客户端 cursor 恢复和可选 Event Journal 恢复已实现；面板跨 Session 上下文跟随/锁定、关闭视图提示和服务端审批回执已接入；Recipe 跨版本迁移尚未实现。
+> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察、异步模型任务启动、Agent 停止任务与人工接管、安全检查点人工恢复、持久化模型回复读取、审批决定、审批时间线、审批历史恢复、`waiting_execution` 恢复交互、Harness Canvas、多 Space 创建/切换/重命名/删除、Workspace Recipe v1 导入导出、跨 Workspace 布局复制、有界布局撤销/重做、真实 Core Terminal、Core Session 发现和直接观察、Codex global MCP 发现与受保护注册、SSE 实时事件订阅、同 Runtime 实例客户端 cursor 恢复和可选 Event Journal 恢复已实现；面板跨 Session 上下文跟随/锁定、关闭视图提示和服务端审批回执已接入；Recipe 跨版本迁移尚未实现。
 >
 > 实现：`desktop/`
 
@@ -168,6 +168,8 @@ http://127.0.0.1:8787
 
 - 含终端游标扩展的 Core 正式发布同步、长时间重连压力测试和凭据轮换。
 - 安装器、Core 补丁包分发、签名、回滚和运行中升级。
+- Core 登录自启动、托盘控制和 Daemon 崩溃恢复。
+- 外部 Core Session 到 Harness Agent transcript/工具策略/审批历史的自动重建。
 - Desktop 认证、远程 Harness Runtime、TLS 和凭据引用。
 - MCP 连接配置、能力变更通知和持久会话。
 - Desktop 侧模型 endpoint 配置、流式输出、自动恢复和完整人工接管控制。
@@ -178,6 +180,7 @@ http://127.0.0.1:8787
 
 - Desktop 默认不再要求用户预先启动外部 Runtime。Wails 通过单实例检查并进入 `OnStartup` 后，在同一 Desktop 进程内启动 Harness Runtime。
 - Runtime 通过 `corebundle.Discover` 查找 Desktop 可执行文件旁的 `core/`，或使用显式 `--core-bundle`。Core 仍是独立受管子进程，只通过公开 HTTP/WebSocket/MCP 契约访问。
+- Desktop 可通过 `--core-service-profile` 或默认用户 profile 连接持久 Core daemon。该实例所有权为 `external`，Desktop 退出不会停止它；Core Sessions 面板读取 `/v1/core/sessions`，并且只在 Shell 属于所选 Session 且状态为 running 时打开终端观察。
 - Runtime 使用动态回环端口并把实际 endpoint 交给同进程 Desktop；审批 Bearer token 只驻留 Runtime 与 Desktop Go 内存，不下发前端。
 - 用户点击关闭或触发系统关闭时，Desktop 显示“退出 Harness / 最小化到任务栏 / 取消”。最小化保留 Runtime、Core 和活动任务；确认退出才停止本次 Desktop 拥有的子进程。
 - `--runtime` 仍用于连接外部 Headless Runtime；外部模式下 Desktop 不拥有 Runtime 或 Core，也不应把连接失败描述成已启动产品。

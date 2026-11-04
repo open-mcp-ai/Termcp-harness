@@ -4,7 +4,7 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 
 它不是第二个 Core，也不是 Termcp-Desktop 的复制品。Core 是真实执行平面，Harness Runtime 是 Agent/工具控制平面，Terminal Workspace 是第一方体验平面。
 
-当前 `dev` 开发快照：`v0.1.9`。版本演进与验证记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前 `dev` 开发快照：`v0.1.10`。版本演进与验证记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 当前状态
 
@@ -16,6 +16,7 @@ Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享的终端工作�
 - 已建立有界事件日志、`/v1/events` 补拉 API 和 `/v1/events/stream` SSE；控制事件不淘汰，诊断事件截断水位可见。`--event-log-file` 可原子持久化当前保留窗口、sequence、诊断丢弃水位和 overflow；Event Journal 与 Session Store 在 Windows 上对 sharing/lock/access-denied 原子替换执行 5/10/25/50 ms 有界重试，耗尽后仍 fail-closed。Desktop 使用固定 Go 桥进行 cursor 重连、有界缓存、事件驱动快照刷新，并在同一 Runtime 实例内持久化客户端 cursor。
 - `--recovery-manifest-file` 可记录 Event、Session、Approval Store 的存在性、大小和 SHA-256 指纹。启动时区分 `not_configured`、`unverified`、`complete` 和 `partial`，并通过 `/v1/recovery` 与 Desktop 诊断面板显示；清单不包含 Store 路径或业务正文。`recovery status` 可离线检查同一组文件，`recovery rebaseline --confirm` 可在 Runtime 停止后显式以当前可读文件建立新基线；重建不会合并、修复或回放业务 Store。
 - 已建立 Core 实例识别与所有权绑定：读取 `/api/version` 和 `/api/daemon`，用端点、PID、启动时间和版本生成实例键；默认将现有 Core 标记为 external，受管绑定必须通过 PID + 启动时间校验；控制 API 和 Desktop 已展示身份快照。
+- 已增加持久本地 Core profile：可通过 Core 公开 daemon 命令独立启动固定端点、版本和 SHA-256 的 Core；Harness 将其标记为 external，退出时不会停止它。Runtime 可读取 `/v1/core/sessions`，Desktop 可发现迟启动前已存在的 Core Session，并在验证 running Shell 后直接观察终端；外部 Agent 的模型 transcript 不会被伪造或推断。
 - 已建立受控工具调用流水线：服务器、工具和精确参数 allowlist，参数/结果大小上限，状态机转换和控制事件轨迹。成功、工具级失败、传输超时/断连后的结果未知已由本地测试覆盖；真实 Core `term` 的幂等覆盖写入、副作用成功/超时未知、Kali POSIX 上主动断开 MCP Host 后的 `unknown` 与不重试，以及 review 挂起、批准、拒绝、并发决定和断开后审批均已通过 opt-in 集成测试。`review_pending` 现在映射为 `approval_pending`，不再误记为成功。
 - 已建立审批关联与协调层：只有显式 `approval_id` 可形成 `trusted` 关联，缺失或冲突不会被猜测；协调器按 revision 串行提交决定，超时/断连收敛为 `unknown`，真实决定只走 Core 公开 HTTP 契约。审批快照可携带独立的结构化 `execution`，区分 shell `submitted`、非 shell `succeeded`、执行 `failed` 和结果 `unknown`，不会把批准等同于执行成功；等待中的执行结果通过有界只读查询收敛，不重放决定。`--approval-store-file` 可持久化可信关联、决定 revision 和最后已知 Execution；重启时 `pending` / `submitting` 收敛为 `unknown`，恢复过程不自动调用 Core 或继续 Agent Loop。`unknown` 审批可通过受保护的只读 reconcile 入口查询 Core，远端仍为 `pending` 时继续保持未知。`/v1/approvals` 以 `correlation_capability` 表示当前观察结果：未配置为 `unavailable`，尚未取得可信审批引用为 `unverified`，建立可信关联后为 `trusted`。决定入口默认关闭，需显式配置受限 Bearer token 文件，并拒绝浏览器 Origin。
 - 已建立确定性 Headless Agent Session 内核：显式步骤只能经过受控工具流水线执行，遇到审批挂起、阻断、失败、取消、过期或 `unknown` 会停止并保留明确状态；Step 支持 `accepted` / `completed` 完成级别，审批结构化结果会触发一次性自动消费，只有满足完成级别后才继续剩余步骤。批准本身不等同于工具执行成功，结果 `unknown` 不会自动重试。Agent 任务可由受保护 `/cancel` 显式停止：派发前进入 `cancelled`，模型请求或工具派发中先进入 `cancelling` 并由真实执行边界收敛；已派发但无法证明结果时保持 `unknown`。等待审批/执行时停止只停止 Harness 继续推进，不宣称远端审批或工具已终止。
@@ -57,7 +58,12 @@ go run ./cmd/termcp-harness serve --mcp-transport stdio --mcp-stdio-command '<mc
 go run ./cmd/termcp-harness serve --mcp-config-file .\examples\mcp-servers.example.json --approval-token-file '<private-token-file>'
 go run ./cmd/termcp-harness core identify --endpoint http://127.0.0.1:18765
 go run ./cmd/termcp-harness core bundle --binary '<core-executable>' --version '<core-version>' --out '<core-bundle-dir>'
+go run ./cmd/termcp-harness core service install --binary '<core-executable>' --endpoint http://127.0.0.1:18765 --data-dir '<private-core-data-dir>'
+go run ./cmd/termcp-harness core service start
+go run ./cmd/termcp-harness core service status
+go run ./cmd/termcp-harness core service stop
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-bundle '<core-bundle-dir>' --core-data-dir '<private-core-data-dir>'
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-service-profile '<private-core-service-profile>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>' --model-endpoint http://127.0.0.1:11434/v1/chat/completions --model-id '<model-id>' --model-token-file '<private-model-token-file>'
@@ -139,6 +145,7 @@ desktop\build\bin\
 
 ```powershell
 .\desktop\build\bin\termcp-harness-desktop.exe
+.\desktop\build\bin\termcp-harness-desktop.exe --core-service-profile '<private-core-service-profile>'
 .\desktop\build\bin\termcp-harness-desktop.exe --core-bundle '<core-bundle-dir>' --tool-policy-file .\examples\tool-policy.readonly.json --model-endpoint http://127.0.0.1:11434/v1/chat/completions --model-id '<model-id>' --model-token-file '<private-model-token-file>'
 ```
 

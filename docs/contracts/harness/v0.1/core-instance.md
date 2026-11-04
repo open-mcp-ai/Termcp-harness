@@ -1,6 +1,6 @@
 # Harness Core 实例识别与所有权绑定 v1（草案）
 
-> 状态：外部 Core 识别、身份快照、重启检测和受管所有权校验已有代码与测试；受管 Core bundle 的基础启动、就绪验证、停止回收和数据目录独占锁已实现。
+> 状态：外部 Core 识别、身份快照、重启检测和受管所有权校验已有代码与测试；受管 Core bundle 的基础启动、就绪验证、停止回收和数据目录独占锁已实现。持久本地 Core profile、external daemon 启动和 Harness 迟附着已有代码、单元测试与真实进程验证。
 >
 > 日期：2026-11-03
 >
@@ -74,9 +74,23 @@ go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http:/
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-bundle '<core-bundle-dir>' --core-data-dir '<private-core-data-dir>'
 ```
 
+持久本地 Core：
+
+```powershell
+go run ./cmd/termcp-harness core service install --binary '<core-executable>' --endpoint http://127.0.0.1:18765 --data-dir '<private-core-data-dir>'
+go run ./cmd/termcp-harness core service start
+go run ./cmd/termcp-harness core service status
+go run ./cmd/termcp-harness core service stop
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-service-profile '<private-core-service-profile>'
+```
+
+profile 固定 Core 二进制绝对路径、版本、SHA-256、loopback endpoint 和持久数据目录；可选凭据只保存为 token 文件引用。Harness 不拥有通过 profile 启动的 daemon：Harness 关闭时只停止自己的 Runtime，Core 继续运行。
+
 如果省略 `--core-endpoint` 但设置 `--mcp-endpoint`，Harness 使用 MCP 端点的 HTTP origin 进行 Core 身份识别。
 
 `core bundle` 不修改源二进制，拒绝覆盖已有 bundle 文件，并写入版本、相对二进制路径和 SHA-256 manifest。`--core-bundle` 不能与 `--core-endpoint` 或 `--mcp-endpoint` 同时使用；受管 Core 默认使用流式 HTTP MCP transport。
+
+`--core-service-profile` 不能与其他 Core/MCP endpoint、stdio MCP 或受管 bundle 组合。未显式传入时，Desktop 和 headless Runtime 会尝试读取默认用户 profile；文件不存在则继续原有受管 bundle 行为。
 
 ## 6. 控制 API
 
@@ -130,3 +144,5 @@ go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-bundle '<core-b
 - 远程 Core、认证、TLS 和凭据引用。
 - 多 Core 实例注册与路由。
 - 用真实 Core 重启验证跨重启 Session/审批失效联动。
+- Windows Service、登录自启动、托盘控制和 Core 崩溃自动重启。
+- Core 重启后 DEAD Session 的完整只读终端历史视图。

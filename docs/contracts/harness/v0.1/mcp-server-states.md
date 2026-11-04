@@ -177,4 +177,4 @@ stdio 命令、参数和工作目录来自启动配置或受保护的 MCP discov
 - OpenCode、Claude、VS Code 等客户端配置和用户指定目录的 MCP 发现；
 - 已注册 MCP 的动态停用、卸载和配置变更检测。
 
-新增、编辑、移除和持久化 Harness 自有 MCP 定义属于 `v0.2.0` 计划，不进入 `v0.1.9` 推送范围。实施边界和验收见 `docs/development/MCP-MANAGEMENT-v0.2.0.md`。
+新增、编辑、移除和持久化 Harness 自有 MCP 定义属于 `v0.2.0` 计划，不进入当前 `v0.1.10` 推送范围。实施边界和验收见 `docs/development/MCP-MANAGEMENT-v0.2.0.md`。

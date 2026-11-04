@@ -64,7 +64,8 @@ docs/
     ├── ADR-019-event-journal-persistence.md
     ├── ADR-020-approval-history-persistence.md
     ├── ADR-021-agent-cancellation.md
-    └── ADR-022-cross-store-recovery-manifest.md
+    ├── ADR-022-cross-store-recovery-manifest.md
+    └── ADR-023-persistent-core-late-attach.md
 ```
 
 ## 阅读顺序
@@ -80,7 +81,7 @@ docs/
 9. `docs/ux/UX-OPTIMIZATION-BACKLOG.md`（Deferred 界面优化候选；不进入当前里程碑）
 10. 相关 ADR
 11. `docs/development/BRANCHING.md`
-12. `docs/development/MCP-MANAGEMENT-v0.2.0.md`（`v0.1.9` 之后的管理写入计划）
+12. `docs/development/MCP-MANAGEMENT-v0.2.0.md`（`v0.1.10` 之后的管理写入计划）
 13. `docs/development/CORE-RELEASE-TRAIN.md`（Harness 与 Core 的版本锁定、打包和兼容策略）
 14. `docs/contracts/README.md`
 15. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
@@ -102,6 +103,7 @@ docs/
 30. `docs/adr/ADR-020-approval-history-persistence.md`（审批历史、fail-closed 恢复与执行元数据边界）
 31. `docs/adr/ADR-021-agent-cancellation.md`（Agent 停止任务、派发门与人工接管边界）
 32. `docs/adr/ADR-022-cross-store-recovery-manifest.md`（跨 Store 恢复证据与部分恢复诊断）
+33. `docs/adr/ADR-023-persistent-core-late-attach.md`（持久本地 Core、external ownership 与 Harness 迟附着）
 
 ## 文档职责
 
