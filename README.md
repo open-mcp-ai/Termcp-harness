@@ -2,7 +2,7 @@
 
 Termcp Harness 是 **MCP 原生的 Agent Runtime 与人机共享终端工作台**。它把 Agent、MCP 工具、审批、终端输出和恢复操作放在同一个可观察的执行现场中，同时保持 Termcp Core 的独立执行权威。
 
-当前 `dev` 快照：`v0.1.10`。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前发布基线：`v0.1.10`。版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 目录
 
