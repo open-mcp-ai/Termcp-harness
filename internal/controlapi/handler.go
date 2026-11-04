@@ -16,6 +16,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/mcpdiscovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/model"
 	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
@@ -41,6 +42,7 @@ type handlerOptions struct {
 	events        EventReader
 	recovery      RecoveryReader
 	mcp           MCPLister
+	mcpDiscovery  MCPDiscovery
 	core          CoreReader
 	approvals     ApprovalLister
 	decider       ApprovalDecider
@@ -82,6 +84,17 @@ type MCPLister interface {
 func WithMCPRegistry(registry MCPLister) Option {
 	return func(options *handlerOptions) {
 		options.mcp = registry
+	}
+}
+
+type MCPDiscovery interface {
+	Discover(context.Context) (mcpdiscovery.Snapshot, error)
+	Register(context.Context, string) (mcpcontrol.Snapshot, error)
+}
+
+func WithMCPDiscovery(discovery MCPDiscovery) Option {
+	return func(options *handlerOptions) {
+		options.mcpDiscovery = discovery
 	}
 }
 
@@ -871,6 +884,47 @@ func NewHandler(source Snapshotter, options ...Option) http.Handler {
 			}
 		}
 		writeJSON(w, http.StatusOK, response)
+	})
+	mux.HandleFunc("GET /v1/mcp/discovery", func(w http.ResponseWriter, request *http.Request) {
+		if config.mcpDiscovery == nil {
+			writeJSON(w, http.StatusOK, mcpdiscovery.Snapshot{
+				Sources: []mcpdiscovery.Source{},
+				Servers: []mcpdiscovery.Server{},
+			})
+			return
+		}
+		snapshot, err := config.mcpDiscovery.Discover(request.Context())
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "MCP discovery failed"})
+			return
+		}
+		if snapshot.Sources == nil {
+			snapshot.Sources = []mcpdiscovery.Source{}
+		}
+		if snapshot.Servers == nil {
+			snapshot.Servers = []mcpdiscovery.Server{}
+		}
+		writeJSON(w, http.StatusOK, snapshot)
+	})
+	mux.HandleFunc("POST /v1/mcp/discovery/{id}/register", func(w http.ResponseWriter, request *http.Request) {
+		if !authorizeMutation(w, request, config.auth) {
+			return
+		}
+		if config.mcpDiscovery == nil {
+			writeJSON(w, http.StatusServiceUnavailable, errorResponse{Error: "MCP discovery is not configured"})
+			return
+		}
+		server, err := config.mcpDiscovery.Register(request.Context(), request.PathValue("id"))
+		switch {
+		case errors.Is(err, mcpdiscovery.ErrUnknownServer):
+			writeJSON(w, http.StatusNotFound, errorResponse{Error: "discovered MCP server not found"})
+		case errors.Is(err, mcpdiscovery.ErrNotLoadable):
+			writeJSON(w, http.StatusConflict, errorResponse{Error: "discovered MCP server cannot be loaded"})
+		case err != nil:
+			writeJSON(w, http.StatusBadGateway, errorResponse{Error: "MCP registration failed"})
+		default:
+			writeJSON(w, http.StatusCreated, server)
+		}
 	})
 
 	return mux

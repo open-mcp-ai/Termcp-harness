@@ -1,6 +1,6 @@
 # ADR-022：跨 Store 恢复清单与部分恢复诊断
 
-- 状态：Accepted / 首个切片已实现
+- 状态：Accepted / 恢复清单与显式基线重建已实现
 - 日期：2026-11-02
 - 责任范围：Harness Event Journal、Agent Session Store、Approval Store 的跨文件恢复证据
 - 关联：`ADR-018`、`ADR-019`、`ADR-020`、`docs/contracts/harness/v0.1/recovery-manifest.md`
@@ -58,5 +58,20 @@ Event Journal、Agent Session 和 Approval History 使用独立文件。每个 S
 
 ## 6. 后续
 
-- 跨 Store 恢复代次的进一步绑定和显式修复命令。
+- 跨 Store 恢复代次的进一步绑定。
 - 自动恢复只允许在完整一致性证据和现有安全检查点同时满足时进入。
+- `HARNESS-RECOVERY-LOCK-001`（Deferred）：为 Runtime 与离线基线命令增加跨进程活动锁，消除“由用户保证 Runtime 已停止”的隐性前提。
+
+## 7. 显式基线重建
+
+`recovery status` 提供不启动 Runtime 的只读检查。`recovery rebaseline --confirm` 允许用户在接受当前文件集合后重建基线，并返回重建前后的快照。
+
+该命令不把重建解释为业务一致性修复：它不合并 Store、不修复文件、不回放副作用，也不允许在 Runtime 运行期间安全执行。由于 Store 尚无跨进程锁，操作前提是 Harness Runtime 已完全停止。
+
+## 8. Deferred：Runtime 活动锁
+
+- 状态：**Deferred（2026-11-03）**，不阻塞当前 `v0.1.7` 开发快照。
+- 风险：`recovery status` 与 `recovery rebaseline` 从读取 Store 到写入清单之间没有跨进程互斥；若 Runtime 同时运行，可能把不同时刻的文件状态记录成新的 `complete` 基线。它不会直接损坏 Store，也不会触发自动恢复，但会产生错误的恢复信心。
+- 计划方案：Runtime 配置恢复清单时持有 manifest 旁的 OS 活动锁，从加载持久化 Store 起保持到停止时清单更新完成；`recovery rebaseline` 非阻塞获取同一锁，失败时拒绝读取后继续写入；`recovery status` 发现活动锁时明确返回运行中警告，不把结果当作稳定代次。
+- 验收：两个独立进程竞争同一清单时只有一个获得活动权；Windows 与 POSIX 均覆盖；进程崩溃后锁可释放且不会依赖过期 PID 文件；`rebaseline` 在 Runtime 运行时拒绝写入且保留旧清单；`status` 不误报 `complete`。
+- 提升时机：在把恢复清单用于自动恢复、提高 rebaseline 为常规运维入口，或关闭 `HARNESS-RECOVERY-LOCK-001` 前。

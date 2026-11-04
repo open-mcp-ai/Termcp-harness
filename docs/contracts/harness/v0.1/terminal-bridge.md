@@ -1,6 +1,6 @@
 # Desktop Terminal Bridge v0.1（草案）
 
-> 状态：固定 Wails Go 桥在回环 Desktop 范围 Accepted；真实 Wails/xterm 性能基线与双 Shell 隔离已验证。Core 本地开发分支的订阅游标和终端字节区间已通过 Harness Desktop 桥 E2E、Shell 结束和 20,000 行洪峰验证；自动重连与精确缺口恢复已通过可断线 WebSocket 测试，正式 Core 发布复验和认证尚未完成。
+> 状态：固定 Wails Go 桥在回环 Desktop 范围 Accepted；真实 Wails/xterm 性能基线与双 Shell 隔离已验证。Core 本地开发分支的订阅游标和终端字节区间已通过 Harness Desktop 桥 E2E、Shell 结束和 20,000 行洪峰验证；自动重连与精确缺口恢复已通过可断线 WebSocket 测试；回环 Core Bearer 认证已接入并在 Windows/Kali VM 复验。正式 Core 发布复验仍未完成。
 >
 > 实现：`desktop/app.go`、`internal/coreterminal/`、`desktop/frontend/src/Panels.tsx`
 >
@@ -79,7 +79,7 @@ Core 本地开发分支为 `watch_add` 增加 `watch_ready.cursor`，为 `termin
 
 - 关闭 Terminal 面板或切换 Shell 只关闭本地桥会话；Core Session 与 Shell 继续运行。
 - 打开面板会重新读取 Shell 列表和保留历史。
-- WebSocket 断开后桥进入 `unknown`；当前版本要求用户显式重连。
+- WebSocket 断开后桥进入 `reconnecting`，按有界退避自动重连并补取连续缺口；只有无法证明区间连续时才进入 `unknown`，此时要求用户显式重连。
 - Bridge 和 Desktop 关闭时清理所有本地 WebSocket 与缓冲，不向 Core 发送 Shell 删除。
 
 ## 6. 安全和输入
@@ -87,7 +87,7 @@ Core 本地开发分支为 `watch_add` 增加 `watch_ready.cursor`，为 `termin
 - 仅接受 `http`/`https` 回环 Core origin，不允许 userinfo、path、query 或 fragment。
 - `input` 最大 64 KiB/次，`rows` 限 1–1000，`cols` 限 1–2000。
 - 终端数据、输入内容和本地桥 ID 不写普通日志或布局持久化。
-- Core 认证接入后，凭据仍只在 Go 进程内存；不得返回前端或写入事件。
+- 内嵌 Runtime 启动受管 Core 后，把 Endpoint 和 Bearer 凭据只交给同进程 Terminal Bridge；凭据不进入 Control API、前端、事件或持久化。外部测试/调试可通过受限 token 文件注入相同凭据。
 
 ## 7. 验证
 
@@ -115,4 +115,4 @@ Core 本地开发分支为 `watch_add` 增加 `watch_ready.cursor`，为 `termin
 
 未完成：
 
-- Core 认证、长时间重连压力测试和正式发布包同步。
+- 长时间重连压力测试、远端/TLS Core 与凭据轮换，以及正式发布包同步。

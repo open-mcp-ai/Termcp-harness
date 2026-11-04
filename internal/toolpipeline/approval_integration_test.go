@@ -18,6 +18,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/approval"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
@@ -320,6 +321,9 @@ func setReview(ctx context.Context, baseURL, sessionID string, enabled bool, tim
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if err := applyCoreAuth(request); err != nil {
+		return err
+	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return err
@@ -336,6 +340,9 @@ func findApproval(t *testing.T, baseURL, sessionID, requestID string) approvalIt
 	request, err := http.NewRequest(http.MethodGet, baseURL+"/api/approvals?session_id="+sessionID, nil)
 	if err != nil {
 		t.Fatalf("build approvals request: %v", err)
+	}
+	if err := applyCoreAuth(request); err != nil {
+		t.Fatal(err)
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -364,6 +371,9 @@ func waitForApprovalState(t *testing.T, baseURL, sessionID, requestID, want stri
 	for time.Now().Before(deadline) {
 		request, err := http.NewRequest(http.MethodGet, baseURL+"/api/approvals?session_id="+sessionID, nil)
 		if err == nil {
+			if authErr := applyCoreAuth(request); authErr != nil {
+				t.Fatal(authErr)
+			}
 			response, requestErr := http.DefaultClient.Do(request)
 			if requestErr == nil {
 				var list approvalListResponse
@@ -392,12 +402,28 @@ func decideApproval(t *testing.T, baseURL, requestID, decision string) int {
 		t.Fatalf("build decision request: %v", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
+	if err := applyCoreAuth(request); err != nil {
+		t.Fatal(err)
+	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatalf("%s approval: %v", decision, err)
 	}
 	_ = response.Body.Close()
 	return response.StatusCode
+}
+
+func applyCoreAuth(request *http.Request) error {
+	path := strings.TrimSpace(os.Getenv("TERMCP_CORE_MCP_AUTH_TOKEN_FILE"))
+	if path == "" {
+		return nil
+	}
+	token, err := tokenfile.Read(path)
+	if err != nil {
+		return fmt.Errorf("read Core auth token: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	return nil
 }
 
 func concurrentDecisions(t *testing.T, baseURL, requestID string) []int {

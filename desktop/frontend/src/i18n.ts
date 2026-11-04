@@ -35,7 +35,8 @@ const zhCN = {
   window: {
     controls: "窗口控制",
     minimise: "最小化",
-    maximise: "最大化或还原",
+    maximise: "最大化",
+    restore: "还原窗口",
     close: "关闭窗口",
   },
   nav: {
@@ -45,7 +46,7 @@ const zhCN = {
     ledger: "事件流",
     runtime: "Harness Runtime",
     mcp: "MCP 服务",
-    railNote: "控制面\n独立运行",
+    railNote: "Runtime\n内嵌启动",
   },
   app: {
     context: "运行概览",
@@ -69,7 +70,7 @@ const zhCN = {
     controlAPI: "控制 API v1",
     authoritative: "Harness Runtime 状态以服务端为准",
     noSnapshot: "暂无 Harness Runtime 快照",
-    observerNote: "Desktop 只提交显式审批，Harness Runtime 独立运行",
+    observerNote: "Desktop 内嵌 Harness Runtime；Termcp Core 继续作为独立受管进程运行",
     runtimeDetails: "Harness Runtime 详情",
   },
   event: {
@@ -114,7 +115,7 @@ const zhCN = {
     version: "版本",
     started: "启动时间",
     health: "健康状态",
-    observer: "关闭窗口不会停止 Harness Runtime。",
+    observer: "最小化窗口会保留 Runtime；只有确认退出才停止本次产品拥有的 Runtime 与 Core。",
     healthOk: "正常",
     healthUnavailable: "不可用",
     lastKnownNote: "Harness Runtime 当前不可达。以下字段是最后一次成功读取的快照，不代表当前状态。",

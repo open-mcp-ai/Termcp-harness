@@ -6,11 +6,13 @@ import {
   closeTerminal,
   decideApproval,
   desktopAvailable,
+  discoverMCP,
   loadAgentSessionTranscript,
   loadTerminalShells,
   openTerminal,
   pollTerminal,
   reconcileApproval,
+  registerDiscoveredMCP,
   refreshApprovalExecution,
   resumeModelLoop,
   resizeTerminal,
@@ -51,6 +53,7 @@ import type {
   Bootstrap,
   HarnessEvent,
   ModelLoopLaunchResult,
+  MCPDiscoverySnapshot,
   TerminalShell,
   TerminalState,
   TrackedApproval,
@@ -1247,7 +1250,67 @@ function TerminalPanelView({
   );
 }
 
-function MCPPanelView({ data }: { data: Bootstrap }) {
+function mcpDiscoveryStateLabel(state: string): string {
+  switch (state) {
+    case "ready":
+      return "可加载";
+    case "disabled":
+      return "已停用";
+    case "unsupported":
+      return "不兼容";
+    case "unavailable":
+      return "不可用";
+    case "needs_configuration":
+      return "需人工配置";
+    case "not_found":
+      return "未发现配置";
+    case "invalid":
+      return "配置异常";
+    default:
+      return state;
+  }
+}
+
+function MCPPanelView({
+  data,
+  canRegister,
+  onChanged,
+}: {
+  data: Bootstrap;
+  canRegister: boolean;
+  onChanged: () => void | Promise<void>;
+}) {
+  const [discovery, setDiscovery] = useState<MCPDiscoverySnapshot | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [registering, setRegistering] = useState("");
+  const [discoveryMessage, setDiscoveryMessage] = useState("");
+
+  const scan = async () => {
+    setScanning(true);
+    setDiscoveryMessage("");
+    try {
+      setDiscovery(await discoverMCP());
+    } catch (error) {
+      setDiscoveryMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const register = async (id: string) => {
+    setRegistering(id);
+    setDiscoveryMessage("");
+    try {
+      const server = await registerDiscoveredMCP(id);
+      setDiscoveryMessage(`已注册 ${server.name}；连接和能力读取状态将在刷新后更新。`);
+      await onChanged();
+    } catch (error) {
+      setDiscoveryMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRegistering("");
+    }
+  };
+
   return (
     <div className="canvas-module mcp-module">
       <div className="canvas-summary-row">
@@ -1275,6 +1338,74 @@ function MCPPanelView({ data }: { data: Bootstrap }) {
           ))}
         </ul>
       )}
+      <section className="mcp-discovery">
+        <div className="mcp-discovery-heading">
+          <div>
+            <strong>本机 MCP 发现</strong>
+            <p className="canvas-note">只读取客户端配置，不自动连接或修改其凭据。</p>
+          </div>
+          <button type="button" onClick={() => void scan()} disabled={scanning}>
+            {scanning ? "扫描中…" : "扫描全局 MCP"}
+          </button>
+        </div>
+        {discoveryMessage ? <p className="canvas-note" role="status">{discoveryMessage}</p> : null}
+        {discovery ? (
+          <>
+            <div className="mcp-discovery-sources">
+              {discovery.sources.map((source) => (
+                <div key={`${source.client}:${source.scope}`}>
+                  <span className="mcp-tag">{source.client}</span>
+                  <span className="mcp-tag">{source.scope}</span>
+                  <span>{mcpDiscoveryStateLabel(source.state)}</span>
+                  <small>{source.server_count} 个 MCP</small>
+                  {source.warning ? <small>{source.warning}</small> : null}
+                </div>
+              ))}
+            </div>
+            {discovery.servers.length ? (
+              <ul className="canvas-list mcp-list discovered-mcp-list">
+                {discovery.servers.map((server) => (
+                  <li key={server.id}>
+                    <div className="canvas-list-row">
+                      <strong>{server.name}</strong>
+                      <span className={`state-badge ${server.state === "ready" ? "ready" : server.state === "unsupported" ? "danger" : "warning"}`}>
+                        {mcpDiscoveryStateLabel(server.state)}
+                      </span>
+                    </div>
+                    <div className="mcp-tags">
+                      {server.tags.map((tag) => <span className="mcp-tag" key={tag}>{tag}</span>)}
+                      <span className="mcp-tag">{server.transport}</span>
+                    </div>
+                    {server.reason ? <p className="canvas-note">{server.reason}</p> : null}
+                    <div className="mcp-discovery-actions">
+                      <span>{server.auth_status ? `认证 ${server.auth_status}` : "认证状态未知"}</span>
+                      <button
+                        type="button"
+                        disabled={
+                          !server.loadable ||
+                          !canRegister ||
+                          registering === server.id ||
+                          data.mcp.servers.some((registered) => registered.id === server.id)
+                        }
+                        title={!canRegister ? "Runtime 启动时未配置 --approval-token-file" : undefined}
+                        onClick={() => void register(server.id)}
+                      >
+                        {data.mcp.servers.some((registered) => registered.id === server.id)
+                          ? "已注册"
+                          : registering === server.id
+                            ? "注册中…"
+                            : "注册并连接"}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="canvas-empty">没有发现可识别的全局 MCP。</p>
+            )}
+          </>
+        ) : null}
+      </section>
     </div>
   );
 }

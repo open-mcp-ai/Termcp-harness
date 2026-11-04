@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/runtimeapp"
 )
 
 func TestLoadMCPConfigFileScopesCredentialsAndEnabledState(t *testing.T) {
@@ -38,7 +39,7 @@ func TestLoadMCPConfigFileScopesCredentialsAndEnabledState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	servers, err := loadMCPConfigFile(path)
+	servers, err := runtimeapp.LoadMCPConfigFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestLoadMCPConfigRejectsDuplicateIDsAndUnknownFields(t *testing.T) {
 		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadMCPConfigFile(path); err == nil {
+		if _, err := runtimeapp.LoadMCPConfigFile(path); err == nil {
 			t.Fatalf("config was accepted: %s", document)
 		}
 	}

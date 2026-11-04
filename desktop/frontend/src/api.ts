@@ -9,6 +9,8 @@ import type {
   EventWindow,
   EventStreamPollResult,
   EventStreamSnapshot,
+  MCPServer,
+  MCPDiscoverySnapshot,
   ModelLoopLaunchResult,
   TerminalOpenResult,
   TerminalPollResult,
@@ -49,6 +51,14 @@ export async function closeEventStream(): Promise<void> {
 
 export async function approvalControlAvailable(): Promise<boolean> {
   return bridge().ApprovalControlAvailable();
+}
+
+export async function discoverMCP(): Promise<MCPDiscoverySnapshot> {
+  return bridge().DiscoverMCP();
+}
+
+export async function registerDiscoveredMCP(id: string): Promise<MCPServer> {
+  return bridge().RegisterDiscoveredMCP(id);
 }
 
 export async function decideApproval(
@@ -121,13 +131,21 @@ export async function closeTerminal(id: string): Promise<void> {
   return bridge().TerminalClose(id);
 }
 
-export async function windowAction(action: "minimise" | "maximise" | "close"): Promise<void> {
+export async function windowAction(action: "minimise" | "close" | "quit"): Promise<void> {
   const app = bridge();
   if (action === "minimise") {
     await app.WindowMinimise();
-  } else if (action === "maximise") {
-    await app.WindowToggleMaximise();
+  } else if (action === "quit") {
+    await app.WindowQuit();
   } else {
-    await app.WindowClose();
+    await app.WindowRequestClose();
   }
+}
+
+export async function isWindowMaximised(): Promise<boolean> {
+  return bridge().WindowIsMaximised();
+}
+
+export async function toggleWindowMaximise(): Promise<boolean> {
+  return bridge().WindowToggleMaximise();
 }

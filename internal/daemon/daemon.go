@@ -64,6 +64,13 @@ func NewServer(listenAddress string, handler http.Handler, rt *runtime.Runtime) 
 
 // Run serves until ctx is cancelled, then drains HTTP and stops Runtime state.
 func (s *Server) Run(ctx context.Context) error {
+	return s.RunWithReady(ctx, nil)
+}
+
+// RunWithReady reports the concrete loopback endpoint after the HTTP server
+// has started accepting requests. This lets an in-process Desktop attach to a
+// dynamically allocated Runtime port without guessing or racing for it.
+func (s *Server) RunWithReady(ctx context.Context, ready func(string) error) error {
 	listener, err := s.listen("tcp", s.listenAddress)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
@@ -88,6 +95,14 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		serverErr <- err
 	}()
+	if ready != nil {
+		if err := ready("http://" + listener.Addr().String()); err != nil {
+			_ = httpServer.Close()
+			<-serverErr
+			s.stopRuntime()
+			return fmt.Errorf("report ready endpoint: %w", err)
+		}
+	}
 
 	select {
 	case err := <-serverErr:

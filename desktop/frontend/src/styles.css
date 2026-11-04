@@ -215,6 +215,85 @@ pre,
   background: var(--alert);
 }
 
+.exit-dialog-backdrop {
+  z-index: 120;
+}
+
+.exit-dialog {
+  width: min(480px, calc(100vw - 32px));
+  padding: 24px;
+  color: #18314d;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(244, 248, 252, 0.98));
+  border: 1px solid #cbd8e6;
+  border-radius: 16px;
+  box-shadow: 0 28px 80px rgba(15, 35, 59, 0.28);
+}
+
+.exit-dialog-kicker {
+  color: #6c8297;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.exit-dialog h2 {
+  margin: 7px 0 9px;
+  font-family: "Bahnschrift SemiCondensed", "Aptos", sans-serif;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+
+.exit-dialog p {
+  margin: 0;
+  color: #687d91;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.exit-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.exit-dialog-actions button {
+  min-height: 38px;
+  padding: 0 14px;
+  background: #ffffff;
+  border: 1px solid #cbd7e4;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.exit-dialog-actions button:hover:not(:disabled) {
+  background: #f3f7fb;
+}
+
+.exit-dialog-actions button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.exit-dialog-actions .exit-dialog-minimise {
+  color: #244f90;
+  background: #edf3ff;
+  border-color: #bfcfed;
+}
+
+.exit-dialog-actions .exit-dialog-quit {
+  color: #ffffff;
+  background: #b95443;
+  border-color: #a84939;
+}
+
+.exit-dialog-actions .exit-dialog-quit:hover:not(:disabled) {
+  background: #a9493a;
+}
+
 .window-controls svg {
   width: 16px;
   height: 16px;
@@ -1505,6 +1584,70 @@ h1 {
   box-shadow: 0 0 8px rgba(211, 100, 89, 0.5);
 }
 
+.mcp-discovery {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--canvas-line);
+}
+
+.mcp-discovery-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.mcp-discovery-heading p {
+  margin: 3px 0 0;
+}
+
+.mcp-discovery-sources {
+  display: grid;
+  gap: 5px;
+}
+
+.mcp-discovery-sources > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--canvas-muted);
+  font-size: 10px;
+}
+
+.mcp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.mcp-tag {
+  padding: 2px 6px;
+  color: #9fb6c7;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 9px;
+  background: rgba(80, 113, 139, 0.16);
+  border: 1px solid rgba(126, 160, 187, 0.25);
+  border-radius: 999px;
+}
+
+.mcp-discovery-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--canvas-muted);
+  font-size: 10px;
+}
+
+.mcp-discovery-actions button {
+  min-height: 28px;
+}
+
 .canvas-window-controls {
   display: flex;
   align-self: stretch;
@@ -1512,11 +1655,22 @@ h1 {
 }
 
 .canvas-window-controls button {
+  display: grid;
   width: 42px;
+  place-items: center;
   color: #b8c9d2;
   background: transparent;
   border: 0;
   cursor: pointer;
+}
+
+.canvas-window-controls svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linejoin: miter;
+  stroke-width: 1.1;
 }
 
 .canvas-window-controls button:hover {

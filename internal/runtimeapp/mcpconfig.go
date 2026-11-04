@@ -1,4 +1,4 @@
-package main
+package runtimeapp
 
 import (
 	"encoding/json"
@@ -32,12 +32,12 @@ type mcpServerConfig struct {
 	WorkDir       string                   `json:"workdir,omitempty"`
 }
 
-type loadedMCPServer struct {
+type LoadedMCPServer struct {
 	Spec    mcpcontrol.Spec
 	Enabled bool
 }
 
-func loadMCPConfigFile(path string) ([]loadedMCPServer, error) {
+func LoadMCPConfigFile(path string) ([]LoadedMCPServer, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, nil
@@ -73,7 +73,7 @@ func loadMCPConfigFile(path string) ([]loadedMCPServer, error) {
 
 	baseDir := filepath.Dir(path)
 	seen := make(map[string]struct{}, len(document.Servers))
-	loaded := make([]loadedMCPServer, 0, len(document.Servers))
+	loaded := make([]LoadedMCPServer, 0, len(document.Servers))
 	for index, server := range document.Servers {
 		server.ID = strings.TrimSpace(server.ID)
 		server.Name = strings.TrimSpace(server.Name)
@@ -118,7 +118,7 @@ func loadMCPConfigFile(path string) ([]loadedMCPServer, error) {
 		if server.Enabled != nil {
 			enabled = *server.Enabled
 		}
-		loaded = append(loaded, loadedMCPServer{Spec: spec, Enabled: enabled})
+		loaded = append(loaded, LoadedMCPServer{Spec: spec, Enabled: enabled})
 	}
 	return loaded, nil
 }

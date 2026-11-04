@@ -1,10 +1,10 @@
 # Harness Core 实例识别与所有权绑定 v1（草案）
 
-> 状态：外部 Core 识别、身份快照、重启检测和受管所有权校验已有代码与测试；自动启动受管 Core 尚未实现。
+> 状态：外部 Core 识别、身份快照、重启检测和受管所有权校验已有代码与测试；受管 Core bundle 的基础启动、就绪验证、停止回收和数据目录独占锁已实现。
 >
-> 日期：2026-10-29
+> 日期：2026-11-03
 >
-> 实现：`internal/coreinstance`、`cmd/termcp-harness core identify`、`GET /v1/core`
+> 实现：`internal/coreinstance`、`internal/coreprocess`、`internal/corebundle`、`internal/corelock`、`serve --core-bundle`、`cmd/termcp-harness core identify`、`GET /v1/core`
 
 ## 1. 边界
 
@@ -23,7 +23,7 @@ Harness 只通过 Core 公开 HTTP 契约识别实例：
 - `managed`：绑定记录包含 Harness 启动时获得的 PID 和进程启动时间；只有与 `/api/daemon` 匹配后才生效。
 - `unverified`：声音称 managed 的绑定与观测身份不匹配，属于冲突状态；Harness 不得据此停止进程。
 
-当前 `serve` 自动绑定只使用 `external`。受管绑定数据结构已经实现，但尚无 Core 子进程启动器，因此不会把用户输入的 PID 直接提升为 managed。
+`serve` 显式配置 `--core-bundle` 时，通过 bundle manifest 的版本与 SHA-256 校验后启动受管 Core，并使用启动 PID、启动时间和 Core 自报身份完成 managed 绑定；未配置 bundle 时只绑定 `external`。不会把用户输入的 PID 直接提升为 managed。
 
 ## 3. 身份核验
 
@@ -62,6 +62,7 @@ Harness 只通过 Core 公开 HTTP 契约识别实例：
 
 ```powershell
 go run ./cmd/termcp-harness core identify --endpoint http://127.0.0.1:18765
+go run ./cmd/termcp-harness core bundle --binary '<core-executable>' --version '<core-version>' --out '<core-bundle-dir>'
 ```
 
 输出单个身份快照 JSON。
@@ -70,9 +71,12 @@ go run ./cmd/termcp-harness core identify --endpoint http://127.0.0.1:18765
 
 ```powershell
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-bundle '<core-bundle-dir>' --core-data-dir '<private-core-data-dir>'
 ```
 
 如果省略 `--core-endpoint` 但设置 `--mcp-endpoint`，Harness 使用 MCP 端点的 HTTP origin 进行 Core 身份识别。
+
+`core bundle` 不修改源二进制，拒绝覆盖已有 bundle 文件，并写入版本、相对二进制路径和 SHA-256 manifest。`--core-bundle` 不能与 `--core-endpoint` 或 `--mcp-endpoint` 同时使用；受管 Core 默认使用流式 HTTP MCP transport。
 
 ## 6. 控制 API
 
@@ -120,9 +124,9 @@ go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http:/
 
 ## 9. 尚未实现
 
-- 自动启动、停止和回收受管 Core 子进程。
-- 数据目录所有权和独占锁验证。
-- Core 可执行文件路径、文件哈希和签名验证。
+- 受管 Core 异常退出后的自动重启和崩后恢复策略。
+- 非 Harness 启动的 Core 是否遵守同一数据目录协作锁，尚无上游契约保证。
+- Core 可执行文件代码签名验证；路径、bundle 边界和 SHA-256 已校验。
 - 远程 Core、认证、TLS 和凭据引用。
 - 多 Core 实例注册与路由。
 - 用真实 Core 重启验证跨重启 Session/审批失效联动。

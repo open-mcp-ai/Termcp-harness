@@ -99,6 +99,24 @@ Runtime 处于 `running` 时返回 `200`，其他生命周期状态返回 `503`�
 
 该端点只证明 Harness 基于公开契约观察到的实例身份；`ownership=external` 表示不拥有 Core 进程，不得据此停止进程。
 
+## `GET /v1/mcp/servers`
+
+返回当前已注册 MCP Server 的连接、能力、启用、所有权和派生 `ready` 状态。注册、连接和能力读取不是同一状态，具体语义见 `mcp-server-states.md`。
+
+## `GET /v1/mcp/discovery`
+
+执行一次本机 MCP 配置发现。当前支持 Codex global 配置，返回来源和 Server 的无凭据元数据；不自动连接或修改客户端配置。
+
+## `POST /v1/mcp/discovery/{id}/register`
+
+使用 Bearer 保护，把最近一次发现结果中 `loadable=true` 的 MCP 显式注册到 Harness Host。成功返回 `201` 和初始 `registered` 快照；后续连接和能力读取异步收敛。
+
+- `404`：发现 ID 不存在；
+- `409`：定义不可加载或注册冲突；
+- `503`：Runtime 未启用 mutation control。
+
+Discovery 不返回 command、args、env、header、token 或配置文件路径。当前不提供任意目录扫描，也不接受任意用户命令。
+
 ## `GET /v1/approvals`
 
 返回当前 Harness 已通过可信 `approval_id` 关联的审批请求。未配置审批协调器时：

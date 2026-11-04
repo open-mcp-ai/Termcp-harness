@@ -17,6 +17,10 @@ import (
 
 func TestManagerListsCoreSessionShells(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer core-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		if request.URL.Path != "/api/sessions/core-1/shells" {
 			http.NotFound(w, request)
 			return
@@ -30,7 +34,7 @@ func TestManagerListsCoreSessionShells(t *testing.T) {
 	}))
 	defer server.Close()
 
-	shells, err := NewManager().Shells(context.Background(), server.URL, "core-1")
+	shells, err := NewManager(WithAuthToken("core-token")).Shells(context.Background(), server.URL, "core-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +46,10 @@ func TestManagerListsCoreSessionShells(t *testing.T) {
 func TestManagerRequiresWatchReadyCursor(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer core-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		if request.URL.Path != "/api/ui/ws" {
 			http.NotFound(w, request)
 			return
@@ -61,7 +69,7 @@ func TestManagerRequiresWatchReadyCursor(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
-	_, err := NewManager().Open(ctx, server.URL, OpenOptions{
+	_, err := NewManager(WithAuthToken("core-token")).Open(ctx, server.URL, OpenOptions{
 		AgentSessionID: "agent-1",
 		CoreSessionID:  "core-1",
 		ShellID:        "shell-1",

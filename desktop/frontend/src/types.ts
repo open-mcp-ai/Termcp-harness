@@ -138,6 +138,48 @@ export interface MCPState {
   control_plane_configured: boolean;
 }
 
+export type MCPDiscoverySourceState =
+  | "ready"
+  | "not_found"
+  | "unavailable"
+  | "invalid";
+
+export type MCPDiscoveryServerState =
+  | "ready"
+  | "disabled"
+  | "unsupported"
+  | "unavailable"
+  | "needs_configuration";
+
+export interface MCPDiscoverySource {
+  client: string;
+  scope: string;
+  tags: string[];
+  state: MCPDiscoverySourceState;
+  server_count: number;
+  warning?: string;
+}
+
+export interface MCPDiscoveredServer {
+  id: string;
+  name: string;
+  client: string;
+  scope: string;
+  tags: string[];
+  transport: string;
+  enabled: boolean;
+  loadable: boolean;
+  state: MCPDiscoveryServerState;
+  reason?: string;
+  auth_status?: string;
+}
+
+export interface MCPDiscoverySnapshot {
+  scanned_at: string;
+  sources: MCPDiscoverySource[];
+  servers: MCPDiscoveredServer[];
+}
+
 export interface CoreIdentity {
   endpoint: string;
   state: CoreIdentityState;
@@ -411,6 +453,8 @@ export interface DesktopBridge {
   CloseEventStream(): Promise<void>;
   RuntimeEndpoint(): Promise<string>;
   ApprovalControlAvailable(): Promise<boolean>;
+  DiscoverMCP(): Promise<MCPDiscoverySnapshot>;
+  RegisterDiscoveredMCP(id: string): Promise<MCPServer>;
   DecideApproval(id: string, revision: number, decision: "approve" | "reject"): Promise<ApprovalDecisionResult>;
   RefreshApprovalExecution(id: string): Promise<ApprovalRefreshResult>;
   ReconcileApproval(id: string): Promise<ApprovalReconciliationResult>;
@@ -425,8 +469,11 @@ export interface DesktopBridge {
   TerminalResize(id: string, rows: number, cols: number): Promise<void>;
   TerminalClose(id: string): Promise<void>;
   WindowMinimise(): Promise<void>;
-  WindowToggleMaximise(): Promise<void>;
+  WindowToggleMaximise(): Promise<boolean>;
+  WindowIsMaximised(): Promise<boolean>;
   WindowClose(): Promise<void>;
+  WindowRequestClose(): Promise<void>;
+  WindowQuit(): Promise<void>;
 }
 
 declare global {
@@ -435,6 +482,9 @@ declare global {
       main?: {
         App?: DesktopBridge;
       };
+    };
+    runtime?: {
+      EventsOn(eventName: string, callback: (...data: unknown[]) => void): () => void;
     };
   }
 }

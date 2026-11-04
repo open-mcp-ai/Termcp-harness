@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/agentsession"
@@ -16,28 +17,82 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/coreterminal"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventstream"
+	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/mcpdiscovery"
+	"github.com/open-mcp-ai/termcp-harness/internal/runtimeapp"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
 	ctx           context.Context
 	client        *controlclient.Client
+	startupHook   func(context.Context) (*controlclient.Client, string, *runtimeapp.App, error)
+	startupErr    error
+	emitEvent     func(string)
 	terminals     *coreterminal.Manager
 	eventMu       sync.Mutex
 	eventStream   *eventstream.Subscription
 	approvalToken string
+	ownedRuntime  *runtimeapp.App
+	allowClose    atomic.Bool
 }
 
 func newApp(client *controlclient.Client, approvalToken string) *App {
-	return &App{
+	return newAppWithRuntime(client, approvalToken, nil)
+}
+
+func newAppWithRuntime(
+	client *controlclient.Client,
+	approvalToken string,
+	ownedRuntime *runtimeapp.App,
+) *App {
+	app := &App{
 		client:        client,
 		terminals:     coreterminal.NewManager(),
 		approvalToken: strings.TrimSpace(approvalToken),
+		ownedRuntime:  ownedRuntime,
 	}
+	app.emitEvent = func(event string) {
+		if app.ctx != nil {
+			runtime.EventsEmit(app.ctx, event)
+		}
+	}
+	app.configureCoreTerminalAuth()
+	return app
+}
+
+func newPendingApp(
+	startupHook func(context.Context) (*controlclient.Client, string, *runtimeapp.App, error),
+) *App {
+	client, _ := controlclient.New("http://127.0.0.1:9")
+	app := newAppWithRuntime(client, "", nil)
+	app.startupHook = startupHook
+	return app
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if a.startupHook == nil {
+		return
+	}
+	client, approvalToken, ownedRuntime, err := a.startupHook(ctx)
+	if err != nil {
+		a.startupErr = err
+		return
+	}
+	a.client = client
+	a.approvalToken = approvalToken
+	a.ownedRuntime = ownedRuntime
+	a.configureCoreTerminalAuth()
+}
+
+func (a *App) configureCoreTerminalAuth() {
+	if a.ownedRuntime != nil {
+		core := a.ownedRuntime.CoreAccess()
+		if core.Endpoint != "" {
+			a.terminals.SetAuthToken(core.AuthToken)
+		}
+	}
 }
 
 func (a *App) shutdown(context.Context) {
@@ -51,9 +106,18 @@ func (a *App) shutdown(context.Context) {
 		a.eventStream = nil
 	}
 	a.eventMu.Unlock()
+	if a.ownedRuntime != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = a.ownedRuntime.Close(ctx)
+		cancel()
+		a.ownedRuntime = nil
+	}
 }
 
 func (a *App) Bootstrap() (controlclient.Bootstrap, error) {
+	if a.startupErr != nil {
+		return controlclient.Bootstrap{}, fmt.Errorf("start embedded runtime: %w", a.startupErr)
+	}
 	ctx, cancel := context.WithTimeout(a.ctx, 8*time.Second)
 	defer cancel()
 	return a.client.Bootstrap(ctx)
@@ -115,6 +179,21 @@ func (a *App) RuntimeEndpoint() string {
 
 func (a *App) ApprovalControlAvailable() bool {
 	return a.approvalToken != ""
+}
+
+func (a *App) DiscoverMCP() (mcpdiscovery.Snapshot, error) {
+	ctx, cancel := a.operationContext(15 * time.Second)
+	defer cancel()
+	return a.client.DiscoverMCP(ctx)
+}
+
+func (a *App) RegisterDiscoveredMCP(id string) (mcpcontrol.Snapshot, error) {
+	if a.approvalToken == "" {
+		return mcpcontrol.Snapshot{}, errors.New("MCP registration control is not configured")
+	}
+	ctx, cancel := a.operationContext(25 * time.Second)
+	defer cancel()
+	return a.client.RegisterDiscoveredMCP(ctx, id, a.approvalToken)
 }
 
 func (a *App) DecideApproval(
@@ -411,10 +490,35 @@ func (a *App) WindowMinimise() {
 	runtime.WindowMinimise(a.ctx)
 }
 
-func (a *App) WindowToggleMaximise() {
+func (a *App) WindowToggleMaximise() bool {
 	runtime.WindowToggleMaximise(a.ctx)
+	return runtime.WindowIsMaximised(a.ctx)
+}
+
+func (a *App) WindowIsMaximised() bool {
+	return runtime.WindowIsMaximised(a.ctx)
 }
 
 func (a *App) WindowClose() {
-	runtime.Quit(a.ctx)
+	a.WindowRequestClose()
+}
+
+func (a *App) WindowRequestClose() {
+	if a.emitEvent != nil {
+		a.emitEvent("app:close-requested")
+	}
+}
+
+func (a *App) WindowQuit() {
+	if a.allowClose.CompareAndSwap(false, true) {
+		runtime.Quit(a.ctx)
+	}
+}
+
+func (a *App) beforeClose(context.Context) bool {
+	if a.allowClose.Load() {
+		return false
+	}
+	a.WindowRequestClose()
+	return true
 }

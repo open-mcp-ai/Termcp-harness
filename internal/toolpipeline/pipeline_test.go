@@ -337,6 +337,47 @@ func TestPipelineReviewPendingTERMTextIsNotSuccess(t *testing.T) {
 	})
 }
 
+func TestPipelineReviewPendingTERMShellTextIsNotSuccess(t *testing.T) {
+	const expiresAt = int64(1793300000000)
+	dispatcher := &fakeDispatcher{result: mcp.NewToolResultText(
+		"TERM/1 202 Accepted\n" +
+			"Path: run session-1:1 nmap -Pn -sV 192.168.1.7\n" +
+			"Approval-ID: approval-shell\n" +
+			"Session-ID: session-1\n" +
+			"Expires-At: 1793300000000\n\n" +
+			"Submitted for review. A human decides it in the Web UI; nothing happens until then. Use approval_id only to correlate this request: do not poll, resubmit, reword or retry - WAIT.",
+	)}
+	tracker := &fakeApprovalTracker{}
+	pipeline, _ := newTestPipelineWithOptions(
+		t,
+		dispatcher,
+		[]Rule{allowedRule()},
+		WithApprovalTracker(tracker),
+	)
+
+	outcome, err := pipeline.Invoke(context.Background(), Request{
+		CallID: "call-review-shell-text", ServerID: "termcp-core",
+		ToolName: "term", Arguments: json.RawMessage(`{"cmd":""}`),
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if outcome.Call.Status != toolcall.StatusApprovalPending ||
+		outcome.Approval == nil ||
+		outcome.Approval.Correlation != approval.CorrelationTrusted ||
+		outcome.Approval.ID != "approval-shell" ||
+		outcome.Approval.SessionID != "session-1" ||
+		outcome.Approval.ExpiresAt == nil ||
+		outcome.Approval.ExpiresAt.UnixMilli() != expiresAt ||
+		outcome.Approval.Summary != "Submitted for review." {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	calls := tracker.Calls()
+	if len(calls) != 1 || calls[0].Reference.ID != "approval-shell" {
+		t.Fatalf("tracker calls = %+v", calls)
+	}
+}
+
 func TestPipelineReviewPendingCapturesTrustedTERMHeaders(t *testing.T) {
 	const expiresAt = int64(1793300000000)
 	dispatcher := &fakeDispatcher{result: mcp.NewToolResultText(

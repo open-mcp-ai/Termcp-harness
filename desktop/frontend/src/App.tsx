@@ -10,13 +10,20 @@ import {
   approvalControlAvailable,
   closeEventStream,
   desktopAvailable,
+  isWindowMaximised,
   loadBootstrap,
   openEventStream,
   pollEventStream,
+  toggleWindowMaximise,
   windowAction,
 } from "./api";
 import CanvasGrid from "./CanvasGrid";
-import { mcpStatusSummary } from "./connectionStatus";
+import {
+  coreStatusSummary,
+  mcpStatusSummary,
+  runtimeStatusSummary,
+  runtimeStatusTone,
+} from "./connectionStatus";
 import {
   CANVAS_COLUMNS,
   CANVAS_GAP,
@@ -49,7 +56,7 @@ import {
 } from "./canvas";
 import { persistEventCursor, resolveEventCursor } from "./eventCursor";
 import { mergeRealtimeEvents } from "./events";
-import { agentStateLabel, coreStateLabel, messages, recoveryStateLabel } from "./i18n";
+import { agentStateLabel, messages, recoveryStateLabel } from "./i18n";
 import {
   ActivityPanel,
   AgentPanel,
@@ -101,13 +108,41 @@ const eventStreamCopy: Record<EventStreamState, string> = {
 const WORKSPACE_STORAGE_KEY = "termcp.canvas.workspace";
 type PersistenceState = "checking" | "saved" | "failed";
 
-function WindowControls() {
+function WindowMaximiseIcon({ maximised }: { maximised: boolean }) {
+  return maximised ? (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M4 2.25h5.75V8" />
+      <rect x="2.25" y="4" width="5.75" height="5.75" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <rect x="2.25" y="2.25" width="7.5" height="7.5" />
+    </svg>
+  );
+}
+
+function WindowControls({
+  maximised,
+  onToggleMaximise,
+  onRequestClose,
+}: {
+  maximised: boolean;
+  onToggleMaximise: () => void;
+  onRequestClose: () => void;
+}) {
   if (!desktopAvailable()) return null;
   return (
     <div className="canvas-window-controls no-drag" aria-label={messages.window.controls}>
       <button type="button" aria-label={messages.window.minimise} onClick={() => void windowAction("minimise")}>−</button>
-      <button type="button" aria-label={messages.window.maximise} onClick={() => void windowAction("maximise")}>□</button>
-      <button type="button" aria-label={messages.window.close} onClick={() => void windowAction("close")}>×</button>
+      <button
+        type="button"
+        aria-label={maximised ? messages.window.restore : messages.window.maximise}
+        title={maximised ? messages.window.restore : messages.window.maximise}
+        onClick={onToggleMaximise}
+      >
+        <WindowMaximiseIcon maximised={maximised} />
+      </button>
+      <button type="button" aria-label={messages.window.close} onClick={onRequestClose}>×</button>
     </div>
   );
 }
@@ -168,10 +203,54 @@ export default function App() {
     () => readStoredWorkspaceHistory(localStorage, workspaceCatalog.spaces),
   );
   const [persistenceState, setPersistenceState] = useState<PersistenceState>("checking");
+  const [windowMaximised, setWindowMaximised] = useState(false);
+  const [exitDialogOpen, setExitDialogOpen] = useState(false);
+  const [quitting, setQuitting] = useState(false);
   const inFlight = useRef(false);
   const runtimeInstance = useRef("");
   const eventCursor = useRef(0);
   const recipeFileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!desktopAvailable()) return;
+    let active = true;
+    const syncMaximised = () => {
+      void isWindowMaximised()
+        .then((maximised) => {
+          if (active) setWindowMaximised(maximised);
+        })
+        .catch(() => {});
+    };
+    syncMaximised();
+    window.addEventListener("resize", syncMaximised);
+    return () => {
+      active = false;
+      window.removeEventListener("resize", syncMaximised);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!desktopAvailable()) return;
+    return window.runtime?.EventsOn("app:close-requested", () => {
+      setQuitting(false);
+      setExitDialogOpen(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!exitDialogOpen || quitting) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExitDialogOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [exitDialogOpen, quitting]);
+
+  const toggleMaximised = useCallback(() => {
+    void toggleWindowMaximise()
+      .then(setWindowMaximised)
+      .catch(() => {});
+  }, []);
 
   const openModuleDrawer = useCallback(() => {
     setCommandPalette(false);
@@ -980,7 +1059,13 @@ export default function App() {
           />
         );
       case "mcp":
-        return <MCPPanel data={data} />;
+        return (
+          <MCPPanel
+            data={data}
+            canRegister={approvalControl && !stale}
+            onChanged={refresh}
+          />
+        );
       case "activity":
         return <ActivityPanel data={data} session={resolvedContext?.session} stale={stale} />;
       case "diagnostics":
@@ -1057,13 +1142,15 @@ export default function App() {
     );
   }, [changePanelContext, resolvePanelContext, selectedSessionId, stale]);
 
-  const runtimeState = error ? "unknown" : data?.runtime.state ?? "new";
+  const runtimeSummary = runtimeStatusSummary(
+    error ? "unknown" : data?.runtime.state ?? "new",
+    eventStreamState,
+  );
+  const runtimeState = runtimeSummary.state;
   const runtimeLabel = runtimeState === "unknown" ? messages.state.unknown : stateCopy[runtimeState];
-  const coreState = data?.core.core?.state ?? "unavailable";
-  const coreLabel = data?.core.core
-    ? coreStateLabel(data.core.core.state)
-    : messages.core.unconfigured;
-  const mcpStatus = mcpStatusSummary(data?.mcp);
+  const runtimeAvailable = runtimeSummary.available;
+  const coreStatus = coreStatusSummary(data?.core, runtimeAvailable);
+  const mcpStatus = mcpStatusSummary(data?.mcp, runtimeAvailable);
 
   return (
     <div className="canvas-shell">
@@ -1098,13 +1185,17 @@ export default function App() {
           </button>
         </div>
 
-        <div className={`canvas-status-cluster state-${runtimeState}`} aria-live="polite">
-          <span><i className="status-dot" />Runtime {runtimeLabel}</span>
-          <span><i className={`status-dot ${coreState === "identified" ? "ready" : "warning"}`} />Core {coreLabel}</span>
+        <div className="canvas-status-cluster" aria-live="polite">
+          <span><i className={`status-dot ${runtimeStatusTone(runtimeState)}`} />Runtime {runtimeLabel}</span>
+          <span><i className={`status-dot ${coreStatus.tone}`} />{coreStatus.label}</span>
           <span><i className={`status-dot ${mcpStatus.tone}`} />{mcpStatus.label}</span>
         </div>
 
-        <WindowControls />
+        <WindowControls
+          maximised={windowMaximised}
+          onToggleMaximise={toggleMaximised}
+          onRequestClose={() => void windowAction("close")}
+        />
       </header>
 
       <main className="canvas-main">
@@ -1528,6 +1619,57 @@ export default function App() {
               </button>
             </footer>
           </aside>
+        </div>
+      ) : null}
+
+      {exitDialogOpen ? (
+        <div className="module-drawer-backdrop exit-dialog-backdrop" role="presentation">
+          <section
+            className="exit-dialog no-drag"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="exit-dialog-title"
+            aria-describedby="exit-dialog-description"
+          >
+            <span className="exit-dialog-kicker">Termcp Harness</span>
+            <h2 id="exit-dialog-title">要退出，还是最小化到任务栏？</h2>
+            <p id="exit-dialog-description">
+              最小化会保留 Harness Runtime、Termcp Core 和正在执行的任务。退出会停止本次 Harness
+              拥有的 Runtime 与 Core 子进程；已派发的工具结果仍可能未知。
+            </p>
+            <div className="exit-dialog-actions">
+              <button
+                type="button"
+                autoFocus
+                disabled={quitting}
+                onClick={() => setExitDialogOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="exit-dialog-minimise"
+                disabled={quitting}
+                onClick={() => {
+                  setExitDialogOpen(false);
+                  void windowAction("minimise");
+                }}
+              >
+                最小化到任务栏
+              </button>
+              <button
+                type="button"
+                className="exit-dialog-quit"
+                disabled={quitting}
+                onClick={() => {
+                  setQuitting(true);
+                  void windowAction("quit");
+                }}
+              >
+                {quitting ? "正在退出…" : "退出 Harness"}
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
     </div>

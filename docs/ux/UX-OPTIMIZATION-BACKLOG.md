@@ -11,6 +11,8 @@
 > 多 Space 导航（2026-11-01）：固定场景模板不再占据 Space 切换器的首要层级；“我的 Spaces”优先展示，并支持从空白或场景模板创建多个个人 Space、重命名、删除和独立持久化布局/历史。当前验证为前端类型检查、39 项 Node 回归、Vite production build 和 1440/390 px 浏览器交互回归；尚未在真实 Wails 窗口复验。
 >
 > 状态语义收口（2026-11-02）：MCP 未配置或没有 Server 时改为中性灰；本地持久化失败不再显示为已保存；Session 汇总把结果未知与失败、阻断、过期分开，并显式写出每项包含的状态。Desktop 当前可组合项统一称“面板”，不再把面板添加描述成模块安装。
+>
+> 验证缺口登记（2026-11-03）：经复核，“测试层级不同”和“缺少可控故障时序”属于正式验证缺口，不再只表述为一般待复验。单元、Node、HTTP 桩和 SSE 桥测试不能替代真实 Wails + 真实 Runtime/Core 链路；真实断线、晚到/重复/乱序回执和跨进程重启也必须在可控故障注入下验收。跨条目执行方法登记为 `UX-BL-010`。
 
 ## 使用规则
 
@@ -22,6 +24,8 @@
 ## UX-BL-001：跨面板上下文跟随与锁定
 
 **实现状态：** 前端切片、Terminal 真实 Core 上下文切片和实时事件订阅已实现（2026-10-31）。Workspace 可选择当前 Session；Agent、审批、Terminal 和 Activity 面板显示“跟随当前/已锁定/关联未知”，锁定状态随布局持久化。Terminal 只使用可信 `core_session_id` 和 Shell 列表，真实 Session 切换已接入。
+
+**验证缺口（2026-11-03）：** 真实 Desktop 已验证 Session 跟随、锁定和关联未知，但尚未记录锁定目标关闭、失联或权限变化时的可控故障注入。有限场景通过不能等同于全部验收要点完成；执行方法见 `UX-BL-010`。
 
 **问题**
 
@@ -50,6 +54,8 @@
 ## UX-BL-002：关闭视图与停止任务彻底分离
 
 **实现状态：** 已实现（2026-11-01）。关闭面板与停止任务已分离：Agent 面板提供受保护停止操作，先显示“正在停止”，只有收到 Runtime 回执后才显示安全取消、远端结果未知或审批仍待处理；关闭面板仍只关闭视图。Workspace 后台任务计数包含 `running`、`cancelling` 和等待审批/执行。模型任务启动和人工恢复改为异步，因此任务运行中仍可选择 Session 并停止。
+
+**验证缺口（2026-11-03）：** 真实 Wails 已验证后台任务计数和关闭面板不停止 Core Session，但尚未覆盖停止请求与 SSE/HTTP 断线发生在同一时间窗口、且旧回执随后到达的故障时序；执行方法见 `UX-BL-010`。
 
 **问题**
 
@@ -107,6 +113,8 @@
 ## UX-BL-004：审批与时间线以服务端权威状态收敛
 
 **实现状态：** 前端切片、实时事件切片、`waiting_execution` 人工核对入口和客户端 cursor 持久化已实现（2026-10-31）。审批提交显示“提交中”，成功后才根据服务端回执更新，未知结果保持“结果未知”；每条审批可展开精确 ID 关联的时间线，Activity 仍显示 subject/correlation 并明确标记关联未知。`waiting_execution` 可从受限只读入口重新核对 Core Execution 并触发已有可信证据上的步骤恢复，不重提审批或工具调用。SSE 事件触发合并快照刷新并支持 cursor 重连，仍保留 15 秒兜底轮询；cursor 按 Runtime endpoint 和 instance ID 保存，实例变化时安全重置。真实晚到回执、审批断线专项测试和真实 Wails 进程重启恢复尚未验证。
+
+**验证进展（2026-11-03）：** 已通过可控代理在 Core 接受决定后切断响应，确认 Harness 与 Wails 均显示结果未知；断线窗口结束后，只读核对收敛为 `approved/submitted`，Session 继续并完成。真实 Wails 进程重开后恢复同一 Session、布局和事件轨迹。重复/乱序/旧 revision 回执注入与决定提交期间 Runtime 重启仍未覆盖；执行方法见 `UX-BL-010`。
 
 **问题**
 
@@ -201,3 +209,95 @@ Workspace 导入导出、持久化格式首次发布、跨版本升级、跨 Wor
 - localStorage 写入失败时不能继续显示“已保存”。
 - `unknown` 不得计入失败或异常。
 - 只有完成 Manifest、安装和启用生命周期后，UI 才能把对象称为可安装模块。
+
+## UX-BL-009：Terminal 前端依赖按需加载
+
+**实现状态：** Deferred（2026-11-03），不进入 `v0.1.7` 实施范围，不是当前发布阻断项。
+
+**问题**
+
+Vite production build 当前报告主 JavaScript chunk 约 `625.07 KiB`、gzip 后约 `177.17 KiB`，超过其 `500 KiB` 未压缩告警阈值。`Panels.tsx` 静态导入 `@xterm/xterm` 与 FitAddon，使 Terminal 实现进入首屏 bundle，即使当前 Workspace 没有 Terminal 面板。
+
+**候选方案**
+
+- 将 Terminal 面板及 xterm CSS 改为动态导入或 `React.lazy`，避免无 Terminal 的 Workspace 加载终端代码。
+- 在拆分后记录 Wails 冷启动、首个 Workspace 可交互时间、首次打开 Terminal 时间和 WebView2 内存基线。
+- 不以单纯提高 `chunkSizeWarningLimit` 作为修复；该做法只隐藏告警，不减少代码解析和加载成本。
+- 如仍需 vendor 拆分，优先按实际加载路径拆分，不把 `manualChunks` 当作性能改善的替代证据。
+
+**触发时机**
+
+下一次处理 Wails 启动性能、Terminal 面板加载、WebView2 内存或前端 bundle 体积时；当前版本保持现状。
+
+**验收要点**
+
+- 没有 Terminal 面板的 Workspace 不解析 xterm 主实现。
+- Terminal 首次打开仍完成真实 Core Shell 绑定、历史恢复、输入输出、resize 和自动重连。
+- production build 不再出现未解释的 chunk 大小告警，或基线文档明确接受剩余大小。
+- 优化前后的启动、Terminal 首开和内存数据可比较，不出现无依据的性能声明。
+
+## UX-BL-010：真实故障时序与跨进程验收
+
+**实现状态：** Partially verified / Open（2026-11-03）。真实审批断线和 Wails 跨进程恢复已完成首个组合验收；其余故障矩阵仍待补测。
+
+**缺口性质**
+
+- **测试层级缺口：** 单元、Node、HTTP 桩和 SSE 桥测试只能证明局部逻辑；不能替代真实 Wails、WebView2、Runtime、Core/MCP 和审批链路的组合验收。
+- **故障时序缺口：** 真实断线、晚到回执、重复回执、乱序事件、旧 revision 晚到和跨进程重启需要可控注入；仅在正常顺序下通过测试不足以证明状态不会回退或误报。
+
+**候选方案**
+
+- 使用可控 TCP/SSE 代理，在审批提交、停止请求、事件补拉和重连的精确窗口切断或延迟链路。
+- 注入晚到、重复、乱序和旧 revision 回执，验证界面停留在 `unknown` 或较新的可信终态，不被旧证据覆盖。
+- 对 Wails Desktop 与 Runtime 分别执行受控停止、重启和同实例 cursor 恢复，验证 UI、事件窗口和快照一致收敛。
+- 将自动化可证明部分纳入回归；无法自动读取的 WebView2 视觉状态使用可复现的人工验收记录，不把构建成功冒充为交互完成。
+
+**触发时机**
+
+下一次处理审批断线、停止任务竞态、SSE cursor 恢复、Wails 进程重启或相关高风险验收时优先纳入。
+
+**验收要点**
+
+- 点击批准/拒绝或停止后断线，界面显示结果未知，不显示未经确认的成功终态。
+- 晚到、重复、乱序和旧 revision 回执不能覆盖较新的可信终态。
+- Wails 与 Runtime 跨进程重启后，同实例 cursor 可继续补拉；实例变化或记录损坏时安全重置且缺口可见。
+- 至少一个真实 Core/MCP 链路和真实 Wails 窗口完成同一故障场景，而不是只由单元测试或桩测试证明。
+
+**真实 E2E 证据（2026-11-03）**
+
+- 环境：Kali `192.168.1.6` → Debian 13 靶机 `192.168.1.7`，Core `dev-938c53f`，Harness 临时 Runtime + Wails 生产构建。
+- 基线：Harness 经 Core MCP 在 Kali Session 执行 `nmap -Pn -p22,80 192.168.1.7`，Core review 产生可信 `approval_id`；批准后只执行一次，输出中确认 `22/tcp` 与 `80/tcp` 开放。
+- 真实缺陷：shell 输入 review 文本使用 `Submitted for review.`；Harness 原逻辑只识别 `Submitted for review:`，首次真实执行把 pending 误记为 `succeeded`。已修复并增加回归测试。
+- 故障注入：代理把批准请求转发给 Core 后丢弃下游响应，并短暂切断后续 Lookup；Harness 事件为 `approval.decision.submitting → approval.outcome_unknown`，Wails 显示“结果未知”。
+- Runtime 断连：停止临时 Runtime 后，Wails 的 Events 状态进入“重连中”；修复前顶部仍残留“Runtime 运行中”，修复后 Runtime、Core 和 MCP 同步显示状态未知，不把最后快照冒充当前在线状态。
+- 恢复：断线窗口结束后执行只读 `approvals reconcile`，事件变为 `approval.reconciled`，状态收敛为 `approved`、Execution 为 `submitted`；Wails 随后显示 `waiting_execution → resumed → completed`。
+- 跨进程：终止并重开 Wails 后，同一 Session、布局、最终状态和截至 `sequence=27` 的事件轨迹恢复；未重新提交审批或工具调用。
+- Runtime 重启：停止临时 Runtime 后，Wails 显示 Runtime/Core/MCP 状态未知和 Events 已停止；使用同一 Event/Session/Approval Store 重启后自动重连，恢复 Session 与事件轨迹，并因强制停止后的 Store 指纹变化明确显示“部分恢复”，没有把状态写成完整恢复。
+- 仍未验证：重复、乱序、旧 revision 回执和决定提交期间 Runtime 重启；不得据此宣称完整故障矩阵通过。
+
+## UX-BL-011：MCP 管理界面的统计口径与生命周期解释
+
+**实现状态：** Deferred（2026-11-03），不进入当前切片。
+
+**问题**
+
+MCP 面板顶部显示 `MCP Servers {ready}/{total}`，但该数字只来自 `/v1/mcp/servers` 的 Harness 已登记 Server；下方“本机 MCP 发现”来自独立的 `/v1/mcp/discovery`。因此界面可能出现“发现列表有 2 个，但顶部仍是 1/1”的情况：这表示一个已登记 Server 就绪，另外的条目尚未登记或未就绪，而不是两个运行中 Server 的完整计数。当前文案没有充分说明两者差异。
+
+**候选方案**
+
+- 顶部统计改为明确文案，例如“已登记 MCP 1/1 就绪”，并单独显示“已发现 2”。
+- 发现项始终显示独立状态标签：已发现、可加载、已登记、已连接、能力已读取、已启用或不可用。
+- 不把发现数计入 `ready/total`，也不把“已发现”或“已登记”显示为“已连接/已启用”。
+- 当同一发现项已登记时，明确标出对应 Harness Server ID，避免重复条目被误认为两个实例。
+- 只有一个已登记项时仍显示 `1/1`，但同时显示发现数，解释差异而不是合并两个生命周期。
+
+**触发时机**
+
+开始 `v0.2.0` MCP 新增、编辑、导入和 Desktop 管理表单优化时一并处理。
+
+**验收要点**
+
+- 用户能从界面直接区分“本机发现数”和“Harness 已登记运行数”。
+- 发现、登记、连接、能力、启用状态分别可读，任何计数不跨生命周期合并。
+- 发现列表有多个条目但仅一个已登记时，统计与列表解释一致，不产生新的误导。
+- 已登记但连接失败、能力未读取或未启用时，不得显示为就绪。

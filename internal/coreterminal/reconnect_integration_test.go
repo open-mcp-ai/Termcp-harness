@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
 )
 
 func TestManagerCoreReconnectIntegration(t *testing.T) {
@@ -29,7 +31,7 @@ func TestManagerCoreReconnectIntegration(t *testing.T) {
 	}
 
 	proxy := startReconnectProxy(t, endpoint)
-	manager := NewManager()
+	manager := NewManager(WithAuthToken(coreReconnectAuthToken(t)))
 	manager.reconnectMin = 25 * time.Millisecond
 	manager.reconnectMax = 100 * time.Millisecond
 	defer manager.Shutdown()
@@ -87,6 +89,19 @@ func TestManagerCoreReconnectIntegration(t *testing.T) {
 		sawReconnecting,
 		output.String(),
 	)
+}
+
+func coreReconnectAuthToken(t *testing.T) string {
+	t.Helper()
+	path := strings.TrimSpace(os.Getenv("TERMCP_CORE_AUTH_TOKEN_FILE"))
+	if path == "" {
+		return ""
+	}
+	token, err := tokenfile.Read(path)
+	if err != nil {
+		t.Fatalf("read Core auth token: %v", err)
+	}
+	return token
 }
 
 type reconnectProxy struct {

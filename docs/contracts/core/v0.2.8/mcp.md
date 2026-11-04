@@ -92,6 +92,7 @@ Harness 已通过 MCP `CallTool` 调用 `term` 且传入空 `cmd`，收到非空
 2026-10-29 通过 Kali POSIX 专用 session、MCP 工具流水线和公开 HTTP API 验证：
 
 - `PATCH /api/sessions/{id}/approval` 能启用 review；`term write` 返回非错误文本 `TERM/1 202 Accepted`，正文包含 `Submitted for review:`，没有可轮询的审批 ID。
+- 2026-11-03 在 Kali → Debian 13 靶机的真实链路上复验：shell 输入形式的 `term run` 返回同一 `TERM/1 202 Accepted` 和可信 `Approval-ID` 状态头，但正文使用 `Submitted for review.`（句号）而非 `Submitted for review:`（冒号）。Harness 必须同时识别两种文本；先前只识别冒号会把 pending 误记为 succeeded。
 - 挂起写入没有创建文件。Harness 将该结果收敛为 `approval_pending`，不会误记为 `succeeded`。
 - 关闭提交侧 MCP Host 后，请求仍保留在 `GET /api/approvals`；随后批准会成功执行并创建文件。第二次决定返回 `409`。
 - 拒绝请求后文件不存在；随后批准同一请求返回 `409`。

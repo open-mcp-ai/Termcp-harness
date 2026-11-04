@@ -17,6 +17,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
 	"github.com/open-mcp-ai/termcp-harness/internal/model"
 	runtimepkg "github.com/open-mcp-ai/termcp-harness/internal/runtime"
+	"github.com/open-mcp-ai/termcp-harness/internal/runtimeapp"
 	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
@@ -107,7 +108,7 @@ func TestModelAgentLoopCoreControlAPIIntegration(t *testing.T) {
 		controlapi.WithMCPRegistry(host),
 		controlapi.WithAgentSessions(sessions),
 		controlapi.WithAgentSessionRunner(sessions, pipeline),
-		controlapi.WithAgentModelLoop(sessions, adapter, &policyModelToolProvider{host: host, policy: policy}),
+		controlapi.WithAgentModelLoop(sessions, adapter, &runtimeapp.PolicyModelToolProvider{Host: host, Policy: policy}),
 		controlapi.WithApprovalAuthorizer(authorizer),
 	)
 	server := httptest.NewServer(handler)

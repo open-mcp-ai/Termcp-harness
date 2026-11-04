@@ -1,8 +1,8 @@
 # Harness MCP Server 状态 v1（草案）
 
-> 状态：持久 Streamable HTTP、SSE、stdio、受管 stdio 子进程、能力读取、启用/停用、健康检查、退避重连、能力自动刷新、Bearer 凭据引用和 Event Log 已接入。
+> 状态：持久 Streamable HTTP、SSE、stdio、受管 stdio 子进程、能力读取、启用/停用、健康检查、退避重连、能力自动刷新、Bearer 凭据引用、本机 Codex global MCP 发现和受保护显式注册已接入。
 >
-> 实现：`internal/mcpcontrol`
+> 实现：`internal/mcpcontrol`、`internal/mcpdiscovery`
 
 ## 1. 五个独立维度
 
@@ -114,7 +114,7 @@ go run ./cmd/termcp-harness serve `
   --mcp-stdio-workdir '<working-directory>'
 ```
 
-stdio 命令、参数和工作目录只来自启动配置；控制 API 和 Desktop 不提供任意命令执行入口。stdio 不得配置 endpoint 或 Bearer Token，子进程继承 Runtime 环境并追加显式环境项。
+stdio 命令、参数和工作目录来自启动配置或受保护的 MCP discovery 注册；控制 API 和 Desktop 不提供任意用户输入命令执行入口。stdio 不得配置 endpoint 或 Bearer Token，子进程继承 Runtime 环境并追加显式环境项。
 
 ## 5. 多来源配置
 
@@ -150,8 +150,31 @@ stdio 命令、参数和工作目录只来自启动配置；控制 API 和 Deskt
 - 工具冲突使用显式 `server_id + tool_name` 命名空间；同名工具不合并，也不按注册顺序猜测来源。
 - Agent Step 和 allowlist 规则必须写明 `server_id`。
 
-## 6. 尚未支持
+## 6. 本机 MCP 发现
+
+`GET /v1/mcp/discovery` 执行一次只读发现，当前支持 Codex global 配置：
+
+- [OpenAI Codex MCP 文档](https://developers.openai.com/codex/mcp)确认官方配置位置为 `~/.codex/config.toml`，服务定义位于 `[mcp_servers.<name>]`；Harness 通过 Codex CLI 的 `mcp list --json` 读取有效 MCP 定义。
+- 每个条目返回稳定发现 ID、名称、客户端、scope、tags、transport、enabled、可加载状态和受限原因。
+- 当前 tags 为 `global`、`codex`；后续客户端和目录来源必须使用独立 tag 和真实 schema，不复用 Codex 格式。
+- API、Desktop、Event Log 和日志不返回 command、args、env、header、token 或配置文件路径。
+- env 字面值、需要额外 HTTP headers 或缺少环境变量的定义不会被标记为可加载。
+- 非回环 HTTP MCP 会被识别，但以 `unsupported` 返回，不尝试连接。
+- Windows npm `.cmd` shim 只在能解析为同一目录内受约束脚本和 Node.js 时可加载；不通过任意 shell 命令拼接执行。
+
+`POST /v1/mcp/discovery/{id}/register` 使用与审批相同的受限 Bearer 控制：
+
+- 必须已在最近一次 discovery snapshot 中发现且 `loadable=true`。
+- 注册只创建 `registered` 状态；连接、能力读取和启用继续由受管 supervisor 推进，不能把注册成功写成 `ready`。
+- 认证、凭据和 live process configuration 不进入 Discovery Snapshot 或事件。
+- 当前不扫描指定目录、OpenCode 或其他客户端；这些来源和 tag 需在独立适配器与契约测试完成后加入。
+
+## 7. 尚未支持
 
 - 非回环 MCP endpoint；
 - OAuth 交互和动态凭据刷新；
-- 独立于 MCP transport 的 PID/进程树所有权诊断。
+- 独立于 MCP transport 的 PID/进程树所有权诊断；
+- OpenCode、Claude、VS Code 等客户端配置和用户指定目录的 MCP 发现；
+- 已注册 MCP 的动态停用、卸载和配置变更检测。
+
+新增、编辑、移除和持久化 Harness 自有 MCP 定义属于 `v0.2.0` 计划，不进入 `v0.1.9` 推送范围。实施边界和验收见 `docs/development/MCP-MANAGEMENT-v0.2.0.md`。

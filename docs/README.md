@@ -22,7 +22,9 @@ docs/
 │   ├── UX-RECOVERY.md
 │   └── UX-OPTIMIZATION-BACKLOG.md
 ├── development/
-│   └── BRANCHING.md
+│   ├── BRANCHING.md
+│   ├── CORE-RELEASE-TRAIN.md
+│   └── MCP-MANAGEMENT-v0.2.0.md
 ├── contracts/
 │   ├── README.md
 │   ├── core/v0.2.8/
@@ -78,26 +80,28 @@ docs/
 9. `docs/ux/UX-OPTIMIZATION-BACKLOG.md`（Deferred 界面优化候选；不进入当前里程碑）
 10. 相关 ADR
 11. `docs/development/BRANCHING.md`
-12. `docs/contracts/README.md`
-13. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
-14. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
-15. `docs/contracts/harness/v0.1/agent-session.md`（确定性 Session 与模型 Loop 状态）
-16. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
-17. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
-18. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
-19. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
-20. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
-21. `docs/contracts/harness/v0.1/terminal-bridge.md`（固定 Terminal 桥、状态与已知边界）
-22. `docs/adr/ADR-014-core-terminal-transport.md`（当前终端数据路径 PoC）
-23. `docs/adr/ADR-015-realtime-event-stream.md`（实时事件流与 Desktop 协调）
-24. `docs/adr/ADR-016-mcp-supervised-lifecycle.md`（MCP 健康、重连与凭据引用）
-25. `docs/contracts/harness/v0.1/model-adapter.md`（模型 Adapter、上下文投影与工具回填）
-26. `docs/adr/ADR-017-model-adapter-agent-loop.md`（模型 Loop 安全边界与当前验证）
-27. `docs/adr/ADR-018-agent-session-persistence.md`（Session 与模型 transcript 持久化边界）
-28. `docs/adr/ADR-019-event-journal-persistence.md`（事件窗口、sequence 与重启恢复边界）
-29. `docs/adr/ADR-020-approval-history-persistence.md`（审批历史、fail-closed 恢复与执行元数据边界）
-30. `docs/adr/ADR-021-agent-cancellation.md`（Agent 停止任务、派发门与人工接管边界）
-31. `docs/adr/ADR-022-cross-store-recovery-manifest.md`（跨 Store 恢复证据与部分恢复诊断）
+12. `docs/development/MCP-MANAGEMENT-v0.2.0.md`（`v0.1.9` 之后的管理写入计划）
+13. `docs/development/CORE-RELEASE-TRAIN.md`（Harness 与 Core 的版本锁定、打包和兼容策略）
+14. `docs/contracts/README.md`
+15. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
+16. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
+17. `docs/contracts/harness/v0.1/agent-session.md`（确定性 Session 与模型 Loop 状态）
+18. `docs/contracts/core/v0.2.8/metadata.md`、`mcp.md` 与 `known-issues.md`（Core 基线、已验证行为与未关闭上游问题）
+19. `docs/contracts/harness/v0.1/core-instance.md`（Core 身份、所有权与重启检测）
+20. `docs/contracts/harness/v0.1/mcp-server-states.md`（MCP 生命周期与能力状态）
+21. `docs/contracts/harness/v0.1/event-log.md`（本地事件顺序与补拉语义）
+22. `docs/contracts/harness/v0.1/desktop-shell.md`（Desktop Shell 当前能力与边界）
+22. `docs/contracts/harness/v0.1/terminal-bridge.md`（固定 Terminal 桥、状态与已知边界）
+23. `docs/adr/ADR-014-core-terminal-transport.md`（当前终端数据路径 PoC）
+24. `docs/adr/ADR-015-realtime-event-stream.md`（实时事件流与 Desktop 协调）
+25. `docs/adr/ADR-016-mcp-supervised-lifecycle.md`（MCP 健康、重连与凭据引用）
+26. `docs/contracts/harness/v0.1/model-adapter.md`（模型 Adapter、上下文投影与工具回填）
+27. `docs/adr/ADR-017-model-adapter-agent-loop.md`（模型 Loop 安全边界与当前验证）
+28. `docs/adr/ADR-018-agent-session-persistence.md`（Session 与模型 transcript 持久化边界）
+29. `docs/adr/ADR-019-event-journal-persistence.md`（事件窗口、sequence 与重启恢复边界）
+30. `docs/adr/ADR-020-approval-history-persistence.md`（审批历史、fail-closed 恢复与执行元数据边界）
+31. `docs/adr/ADR-021-agent-cancellation.md`（Agent 停止任务、派发门与人工接管边界）
+32. `docs/adr/ADR-022-cross-store-recovery-manifest.md`（跨 Store 恢复证据与部分恢复诊断）
 
 ## 文档职责
 

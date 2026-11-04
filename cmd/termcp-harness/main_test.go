@@ -231,6 +231,173 @@ func TestServeWritesAndRefreshesRecoveryManifest(t *testing.T) {
 	}
 }
 
+func TestRecoveryStatusReportsUnverifiedWithoutWritingManifest(t *testing.T) {
+	root := t.TempDir()
+	eventPath := filepath.Join(root, "events.json")
+	manifestPath := filepath.Join(root, "recovery.json")
+	if err := os.WriteFile(eventPath, []byte("events"), 0o600); err != nil {
+		t.Fatalf("WriteFile(events) error = %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{
+		"recovery", "status",
+		"--recovery-manifest-file", manifestPath,
+		"--event-log-file", eventPath,
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	var snapshot recovery.Snapshot
+	if err := json.Unmarshal(stdout.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if snapshot.State != recovery.StateUnverified || snapshot.Consistent {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("status created manifest: %v", err)
+	}
+	if strings.Contains(stdout.String(), root) || strings.Contains(stderr.String(), root) {
+		t.Fatal("recovery status leaked a store path")
+	}
+}
+
+func TestRecoveryRebaselineRequiresConfirmation(t *testing.T) {
+	root := t.TempDir()
+	eventPath := filepath.Join(root, "events.json")
+	manifestPath := filepath.Join(root, "recovery.json")
+	if err := os.WriteFile(eventPath, []byte("events"), 0o600); err != nil {
+		t.Fatalf("WriteFile(events) error = %v", err)
+	}
+	const sentinel = `{"sentinel":true}`
+	if err := os.WriteFile(manifestPath, []byte(sentinel), 0o600); err != nil {
+		t.Fatalf("WriteFile(manifest) error = %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"recovery", "rebaseline",
+		"--recovery-manifest-file", manifestPath,
+		"--event-log-file", eventPath,
+	}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("run() error = %v, want confirmation error", err)
+	}
+	data, readErr := os.ReadFile(manifestPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(manifest) error = %v", readErr)
+	}
+	if string(data) != sentinel {
+		t.Fatalf("manifest changed without confirmation: %q", data)
+	}
+}
+
+func TestRecoveryRebaselineReplacesMismatchedGeneration(t *testing.T) {
+	root := t.TempDir()
+	eventPath := filepath.Join(root, "events.json")
+	sessionPath := filepath.Join(root, "sessions.json")
+	manifestPath := filepath.Join(root, "recovery.json")
+	if err := os.WriteFile(eventPath, []byte("events-v1"), 0o600); err != nil {
+		t.Fatalf("WriteFile(events) error = %v", err)
+	}
+	if err := os.WriteFile(sessionPath, []byte("sessions-v1"), 0o600); err != nil {
+		t.Fatalf("WriteFile(sessions) error = %v", err)
+	}
+	config := recovery.Config{
+		ManifestPath: manifestPath,
+		Stores: map[recovery.StoreName]string{
+			recovery.StoreEvents:   eventPath,
+			recovery.StoreSessions: sessionPath,
+		},
+	}
+	if _, err := recovery.WriteManifest(config); err != nil {
+		t.Fatalf("WriteManifest() error = %v", err)
+	}
+	if err := os.WriteFile(sessionPath, []byte("sessions-v2"), 0o600); err != nil {
+		t.Fatalf("WriteFile(changed sessions) error = %v", err)
+	}
+	if snapshot := recovery.Inspect(config); snapshot.State != recovery.StatePartial {
+		t.Fatalf("precondition snapshot = %+v", snapshot)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run(context.Background(), []string{
+		"recovery", "rebaseline",
+		"--recovery-manifest-file", manifestPath,
+		"--event-log-file", eventPath,
+		"--session-store-file", sessionPath,
+		"--confirm",
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	var result struct {
+		Previous recovery.Snapshot `json:"previous"`
+		Current  recovery.Snapshot `json:"current"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if result.Previous.State != recovery.StatePartial ||
+		result.Current.State != recovery.StateComplete ||
+		!result.Current.Consistent {
+		t.Fatalf("result = %+v", result)
+	}
+	if !strings.Contains(stderr.String(), "stop the Harness Runtime") {
+		t.Fatalf("stderr = %q, want stopped-runtime warning", stderr.String())
+	}
+	if strings.Contains(stdout.String(), root) || strings.Contains(stderr.String(), root) {
+		t.Fatal("recovery rebaseline leaked a store path")
+	}
+	if snapshot := recovery.Inspect(config); snapshot.State != recovery.StateComplete {
+		t.Fatalf("restored snapshot = %+v", snapshot)
+	}
+}
+
+func TestRecoveryRebaselineRejectsUnreadableStoreWithoutOverwritingManifest(t *testing.T) {
+	root := t.TempDir()
+	eventPath := filepath.Join(root, "events.json")
+	manifestPath := filepath.Join(root, "recovery.json")
+	if err := os.Mkdir(eventPath, 0o700); err != nil {
+		t.Fatalf("Mkdir(events) error = %v", err)
+	}
+	const sentinel = `{"sentinel":true}`
+	if err := os.WriteFile(manifestPath, []byte(sentinel), 0o600); err != nil {
+		t.Fatalf("WriteFile(manifest) error = %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := run(context.Background(), []string{
+		"recovery", "rebaseline",
+		"--recovery-manifest-file", manifestPath,
+		"--event-log-file", eventPath,
+		"--confirm",
+	}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("rebaseline accepted an unreadable store")
+	}
+	data, readErr := os.ReadFile(manifestPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile(manifest) error = %v", readErr)
+	}
+	if string(data) != sentinel {
+		t.Fatalf("manifest was overwritten after inspection failure: %q", data)
+	}
+}
+
+func TestRecoveryCommandsRequireManifestAndStore(t *testing.T) {
+	tests := [][]string{
+		{"recovery", "status"},
+		{"recovery", "status", "--recovery-manifest-file", filepath.Join(t.TempDir(), "recovery.json")},
+		{"recovery", "rebaseline", "--confirm", "--event-log-file", filepath.Join(t.TempDir(), "events.json")},
+	}
+	for _, args := range tests {
+		var stdout, stderr bytes.Buffer
+		if err := run(context.Background(), args, &stdout, &stderr); err == nil {
+			t.Fatalf("run(%v) succeeded", args)
+		}
+	}
+}
+
 func TestApprovalsDecideCommand(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

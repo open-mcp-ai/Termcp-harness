@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
 	"github.com/open-mcp-ai/termcp-harness/internal/coreterminal"
+	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
 )
 
 func TestTerminalBridgeCoreIntegration(t *testing.T) {
@@ -27,6 +28,7 @@ func TestTerminalBridgeCoreIntegration(t *testing.T) {
 	app := newApp(client, "")
 	app.ctx = context.Background()
 	defer app.shutdown(context.Background())
+	configureTerminalCoreAuth(t, app)
 
 	result, err := app.TerminalShells(agentSessionID)
 	if err != nil {
@@ -111,6 +113,7 @@ func TestTerminalBridgeCoreShellExit(t *testing.T) {
 	app := newApp(client, "")
 	app.ctx = context.Background()
 	defer app.shutdown(context.Background())
+	configureTerminalCoreAuth(t, app)
 
 	opened, err := app.TerminalOpen(agentSessionID, shellID, 31, 117)
 	if err != nil {
@@ -170,6 +173,7 @@ func TestTerminalBridgeCoreOutputFlood(t *testing.T) {
 	app := newApp(client, "")
 	app.ctx = context.Background()
 	defer app.shutdown(context.Background())
+	configureTerminalCoreAuth(t, app)
 
 	opened, err := app.TerminalOpen(agentSessionID, shellID, 31, 117)
 	if err != nil {
@@ -215,4 +219,17 @@ func TestTerminalBridgeCoreOutputFlood(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("did not observe 20,000 flood lines; bytes=%d", observed.Len())
+}
+
+func configureTerminalCoreAuth(t *testing.T, app *App) {
+	t.Helper()
+	path := strings.TrimSpace(os.Getenv("TERMCP_CORE_AUTH_TOKEN_FILE"))
+	if path == "" {
+		return
+	}
+	token, err := tokenfile.Read(path)
+	if err != nil {
+		t.Fatalf("read Core auth token: %v", err)
+	}
+	app.terminals.SetAuthToken(token)
 }

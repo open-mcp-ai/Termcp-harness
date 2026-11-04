@@ -102,6 +102,8 @@ type PollResult struct {
 type Manager struct {
 	mu           sync.RWMutex
 	sessions     map[string]*bridgeSession
+	authMu       sync.RWMutex
+	authToken    string
 	nextID       atomic.Uint64
 	http         *http.Client
 	dialer       *websocket.Dialer
@@ -110,6 +112,14 @@ type Manager struct {
 	wg           sync.WaitGroup
 	reconnectMin time.Duration
 	reconnectMax time.Duration
+}
+
+type Option func(*Manager)
+
+func WithAuthToken(token string) Option {
+	return func(manager *Manager) {
+		manager.authToken = strings.TrimSpace(token)
+	}
 }
 
 type bridgeSession struct {
@@ -133,11 +143,11 @@ type bridgeSession struct {
 	closed             bool
 }
 
-func NewManager() *Manager {
+func NewManager(options ...Option) *Manager {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{
+	manager := &Manager{
 		sessions:     make(map[string]*bridgeSession),
 		http:         &http.Client{Timeout: defaultHTTPTimeout, Transport: transport},
 		ctx:          ctx,
@@ -148,6 +158,29 @@ func NewManager() *Manager {
 			HandshakeTimeout: defaultHTTPTimeout,
 		},
 	}
+	for _, option := range options {
+		option(manager)
+	}
+	return manager
+}
+
+func (m *Manager) SetAuthToken(token string) {
+	if m == nil {
+		return
+	}
+	m.authMu.Lock()
+	m.authToken = strings.TrimSpace(token)
+	m.authMu.Unlock()
+}
+
+func (m *Manager) authHeaders() http.Header {
+	m.authMu.RLock()
+	token := m.authToken
+	m.authMu.RUnlock()
+	if token == "" {
+		return nil
+	}
+	return http.Header{"Authorization": []string{"Bearer " + token}}
 }
 
 func (m *Manager) Shells(ctx context.Context, endpoint, coreSessionID string) ([]Shell, error) {
@@ -206,7 +239,7 @@ func (m *Manager) Open(ctx context.Context, endpoint string, options OpenOptions
 	if err != nil {
 		return OpenResult{}, err
 	}
-	conn, response, err := m.dialer.DialContext(ctx, wsURL, nil)
+	conn, response, err := m.dialer.DialContext(ctx, wsURL, m.authHeaders())
 	if err != nil {
 		if response != nil && response.Body != nil {
 			response.Body.Close()
@@ -538,7 +571,7 @@ func (m *Manager) connectWatch(ctx context.Context, origin, shellID string) (*we
 	if err != nil {
 		return nil, 0, err
 	}
-	conn, response, err := m.dialer.DialContext(ctx, wsURL, nil)
+	conn, response, err := m.dialer.DialContext(ctx, wsURL, m.authHeaders())
 	if err != nil {
 		if response != nil && response.Body != nil {
 			response.Body.Close()
@@ -907,6 +940,9 @@ func (m *Manager) getJSON(ctx context.Context, requestURL string, target any) er
 		return err
 	}
 	request.Header.Set("Accept", "application/json")
+	if token := m.authHeaders().Get("Authorization"); token != "" {
+		request.Header.Set("Authorization", token)
+	}
 	response, err := m.http.Do(request)
 	if err != nil {
 		return err

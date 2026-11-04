@@ -42,7 +42,7 @@ Harness Runtime 继续负责 Agent Session、审批、策略和工具控制面�
 - xterm 需要低延迟交互字节，固定 Go 桥能直接约束连接、队列和状态。
 - 前端直连会暴露端点与认证边界；通用代理则会扩大凭据和网络暴露面。
 
-该决策的适用范围是当前第一方 Wails Desktop 与回环 Core。真实 Wails/xterm 基线、双 Shell 隔离和最大化尺寸变化均已验证；远程部署、Core 认证和自动重连不在本次 Accepted 范围内。
+该决策的适用范围是当前第一方 Wails Desktop 与回环 Core。真实 Wails/xterm 基线、双 Shell 隔离和最大化尺寸变化均已验证；自动重连和精确缺口恢复已在 Harness 侧接入并通过可断线 WebSocket 测试。内嵌 Runtime 已把受管 Core Bearer 凭据限制在同一 Desktop Go 进程内，并在 Windows/Kali VM 通过固定终端桥验证。远程部署、凭据轮换和长时间重连压力测试不在本次 Accepted 范围内。
 
 ## 3. 约束
 
@@ -86,7 +86,7 @@ Harness Runtime 继续负责 Agent Session、审批、策略和工具控制面�
 - 真实本地 Core 下 20,000 行输出的 `TestTerminalBridgeCoreOutputFlood`
 - `npm run check`
 - `npm run build`
-- `wails build -s -m -nosyncgomod -nopackage -clean`
+- `wails build -s -m -nosyncgomod -clean`
 
 真实集成测试验证了 Shell 归属查询、历史读取、WebSocket watch、输入、输出、resize、20,000 行无桥缓冲丢弃和桥关闭。2026-11-01 使用 Core 本地游标构建复验：历史恢复 488,728 字节，Shell 从游标 965 正常结束于 2406，20,000 行洪峰 482,765 字节、首字节 11 ms、总计 2.266 秒且桥无丢弃。真实 Wails 窗口此前进一步验证了 Session 选择、Terminal 添加、人工输入与输出、关闭视图不停止 Shell、重新打开历史恢复，以及 Core Session 删除后的 `Shell 已结束` 状态。
 

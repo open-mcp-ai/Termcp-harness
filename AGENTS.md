@@ -7,10 +7,12 @@
 ## 工作区现状（先确认，别假设）
 
 - 已有 Go 1.27 Headless Runtime 与 Wails Desktop：`cmd/termcp-harness`、`internal/runtime`、`internal/controlapi`、`internal/daemon`、`internal/coreinstance`、`internal/coreterminal`、`internal/toolcall`、`internal/toolpipeline`、`internal/approval`、`internal/mcpcontrol`、`internal/eventlog`、`internal/eventstream`、`internal/controlclient` 和 `desktop/`。GitHub Actions `Verify` 已覆盖 Runtime、前端和 Windows Wails 构建；Git 开发分支为 `dev`。
-- 当前已实现 Runtime 实例生命周期、本地控制 API、有界事件日志与可选本地持久化、SSE 实时订阅与 Desktop cursor 重连、Core 实例识别与受管所有权校验、工具调用/审批状态机、可选审批历史持久化和 `unknown` 审批只读收敛、持久 MCP Host、健康检查、退避重连、能力自动刷新、Bearer 凭据引用、Streamable HTTP/SSE/stdio 传输和受管 stdio 子进程、OpenAI-compatible 模型 Adapter、有界 Agent Loop、可选本地 Session/transcript 持久化和安全检查点人工恢复，以及 Desktop Session/模型任务启动台/审批时间线/`waiting_execution` 只读核对恢复/真实 Terminal 工作台；Core 身份通过 `/api/version` + `/api/daemon` 识别，使用端点、PID、启动时间和版本生成实例键，区分 external/managed/unverified 并检测重启。受控工具流水线已通过精确 allowlist、参数/结果上限、状态机和事件轨迹接入真实 Core 0.2.8；只读 `term`、幂等覆盖写入、副作用成功/超时未知、MCP Host 断开、调用取消、输出洪峰、12 路并发控制轨迹，以及 review pending/批准/拒绝/并发决定均有真实集成测试。固定 Desktop Terminal 桥已通过真实 Core 的 Shell 归属、历史、输入、输出、resize、20,000 行洪峰和关闭测试，并在真实 Wails 窗口验证输入/输出、关闭视图、历史恢复、Shell 结束状态、20,000 行洪峰、WebView2 内存基线和双 Shell 隔离。Core 本地开发分支另行加入 `watch_ready`、终端绝对字节区间和 `terminal_done.cursor`；Harness 已接入历史游标、实时连续性和旧 watch generation 隔离，缺口 fail-closed 为 `unknown`；隔离 E2E 已验证 488,728 字节历史、实时输出、Shell 结束和 20,000 行洪峰，正式 Core 发布包同步仍未完成。**Core 0.2.8 当前开发基线的审批过期和 session 关闭后取消状态已完成本地修复与严格契约验证，发布同步状态见 known-issues；`--event-log-file` 仅恢复有界事件窗口和 sequence，`--approval-store-file` 仅恢复审批历史且会把重启前未确认审批收敛为 `unknown`，审批队列、客户端 cursor、不能证明确实未执行的 checkpoint 与其他 provider 兼容性仍未解决**。
+- 当前已实现 Runtime 实例生命周期、本地控制 API、有界事件日志与可选本地持久化、SSE 实时订阅与 Desktop cursor 重连、Core 实例识别、受管 Core bundle 启动/停止与受管所有权校验、工具调用/审批状态机、可选审批历史持久化和 `unknown` 审批只读收敛、持久 MCP Host、健康检查、退避重连、能力自动刷新、Bearer 凭据引用、Streamable HTTP/SSE/stdio 传输和受管 stdio 子进程、OpenAI-compatible 模型 Adapter、有界 Agent Loop、可选本地 Session/transcript 持久化和安全检查点人工恢复，以及 Desktop Session/模型任务启动台/审批时间线/`waiting_execution` 只读核对恢复/真实 Terminal 工作台；Core 身份通过 `/api/version` + `/api/daemon` 识别，使用端点、PID、启动时间和版本生成实例键，区分 external/managed/unverified 并检测重启。受控工具流水线已通过精确 allowlist、参数/结果上限、状态机和事件轨迹接入真实 Core 0.2.8；只读 `term`、幂等覆盖写入、副作用成功/超时未知、MCP Host 断开、调用取消、输出洪峰、12 路并发控制轨迹，以及 review pending/批准/拒绝/并发决定均有真实集成测试。固定 Desktop Terminal 桥已通过真实 Core 的 Shell 归属、历史、输入、输出、resize、20,000 行洪峰和关闭测试，并在真实 Wails 窗口验证输入/输出、关闭视图、历史恢复、Shell 结束状态、20,000 行洪峰、WebView2 内存基线和双 Shell 隔离。Core 本地开发分支另行加入 `watch_ready`、终端绝对字节区间和 `terminal_done.cursor`；Harness 已接入历史游标、实时连续性和旧 watch generation 隔离，缺口 fail-closed 为 `unknown`；隔离 E2E 已验证 488,728 字节历史、实时输出、Shell 结束和 20,000 行洪峰，正式 Core 发布包同步仍未完成。**Core 0.2.8 当前开发基线的审批过期和 session 关闭后取消状态已完成本地修复与严格契约验证，发布同步状态见 known-issues；`--event-log-file` 仅恢复有界事件窗口和 sequence，`--approval-store-file` 仅恢复审批历史且会把重启前未确认审批收敛为 `unknown`，审批队列、Event Journal 已淘汰区段的跨重启完整恢复、不能证明确实未执行的 checkpoint 与其他 provider 兼容性仍未解决**。
 - Agent 停止任务与人工接管已实现本地闭环：受保护 `/cancel` 使用 revision CAS，`running` 先进入 `cancelling`；派发前安全取消，工具派发中无法证明结果时进入 `unknown`，等待审批/执行时停止保留远端风险。Desktop 模型启动/恢复已异步化，Agent 面板可停止任务，关闭面板仍只关闭视图。真实 HTTP E2E 已验证长时 `term run` 派发中停止收敛为 `unknown`。
 - 固定 Terminal 桥已有自动重连与精确缺口恢复：断线后 `reconnecting`、200 ms–5 s 退避；新 `watch_ready` 后分页补取 `[lastCursor,newCursor)`，全部通过才恢复 `connected`，超过 4 MiB 或无法证明连续时进入 `unknown`。重连期间输入/resize 被拒绝。真实 Core 已通过 TCP 代理强制断连 E2E，恢复游标到 `4026`。
 - 多来源 MCP 通过 `--mcp-config-file` 注册，工具使用 `server_id + tool_name` 命名空间；非 Core stdio MCP 已通过真实 Agent Session 工具调用测试。
+- MCP discovery 可扫描 Codex global 配置并显示来源 tags、transport 和可加载性；发现结果不包含 command/args/env/token/路径。受 Bearer 保护的固定入口可注册发现项，Windows npm `.cmd` shim 仅在可解析为同目录 Node.js 脚本时加载；发现、注册、连接、能力读取和启用继续保持独立状态。
+- `v0.1.7` 增加 headless `recovery status` 和需 `--confirm` 的 `recovery rebaseline`：可离线检查恢复清单，或在 Runtime 完全停止后以当前可读 Store 显式重建基线。重建不合并、修复或回放业务状态，不可读 Store 会拒绝且保留旧清单。
 - 已实现受保护的 Agent Session 创建、确定性运行和模型 Loop API、CLI `agent run|loop|resume`、精确 JSON allowlist 工具策略、Step 完成级别、审批结果自动消费、受保护的审批 Execution 只读刷新，以及 Desktop 模型任务启动台、Session/审批时间线、`waiting_execution` 核对恢复和 token 内存隔离的批准/拒绝操作；模型 Loop 已验证脚本化 Adapter、本地 HTTP 桩，并通过 Control API → Harness MCP Host → 本机 Core 只读 `term` → DashScope 的真实闭环；真实 Wails 窗口已验证模型最终回复、审批链、`waiting_execution` 恢复按钮、审批历史恢复和 `unknown` 审批只读收敛。`--session-store-file` 可持久化终态 Session、模型消息、最终回复和活动 Loop checkpoint；`model_requesting` / `tools_ready` 的 `runtime_restart unknown` Session 可经 Bearer 保护的显式入口人工恢复，恢复前必须用当前 Runtime 工具目录和 transcript/参数哈希复验，工具派发中、审批或执行未确认仍阻塞。`--event-log-file` 可独立持久化有界事件窗口与 sequence，`--approval-store-file` 可恢复审批历史并将未确认重启前审批收敛为 `unknown`；审批队列、自动恢复和其他 provider 兼容性仍未验证。
 - 这是**独立工作区**，不与旧实现合并；旧代码只作参考（见下节）。
 - 引入技术栈时，把真实可执行命令（含跑单个测试的写法）补进本文件与 README，否则后续 Agent 只能猜。
@@ -36,12 +38,16 @@ go run ./cmd/termcp-harness serve --mcp-transport sse --mcp-endpoint http://127.
 go run ./cmd/termcp-harness serve --mcp-transport stdio --mcp-stdio-command '<mcp-server-executable>' --mcp-stdio-arg '<arg>' --mcp-stdio-workdir '<working-directory>'
 go run ./cmd/termcp-harness serve --mcp-config-file .\examples\mcp-servers.example.json --approval-token-file '<private-token-file>'
 go run ./cmd/termcp-harness core identify --endpoint http://127.0.0.1:18765
+go run ./cmd/termcp-harness core bundle --binary '<core-executable>' --version '<core-version>' --out '<core-bundle-dir>'
+go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-bundle '<core-bundle-dir>' --core-data-dir '<private-core-data-dir>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --core-endpoint http://127.0.0.1:18765 --approval-token-file '<private-token-file>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>' --model-endpoint http://127.0.0.1:11434/v1/chat/completions --model-id '<model-id>' --model-token-file '<private-model-token-file>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>' --session-store-file '<private-session-store-file>' --event-log-file '<private-event-store-file>' --approval-store-file '<private-approval-store-file>'
 go run ./cmd/termcp-harness serve --listen 127.0.0.1:8787 --mcp-endpoint http://127.0.0.1:18765/stream --tool-policy-file .\examples\tool-policy.readonly.json --approval-token-file '<private-token-file>' --session-store-file '<private-session-store-file>' --event-log-file '<private-event-store-file>' --approval-store-file '<private-approval-store-file>' --recovery-manifest-file '<private-recovery-manifest-file>'
+go run ./cmd/termcp-harness recovery status --recovery-manifest-file '<private-recovery-manifest-file>' --session-store-file '<private-session-store-file>' --event-log-file '<private-event-store-file>' --approval-store-file '<private-approval-store-file>'
+go run ./cmd/termcp-harness recovery rebaseline --confirm --recovery-manifest-file '<private-recovery-manifest-file>' --session-store-file '<private-session-store-file>' --event-log-file '<private-event-store-file>' --approval-store-file '<private-approval-store-file>'
 go run ./cmd/termcp-harness agent run --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --steps-file .\examples\agent-steps.readonly.json --token-file '<private-token-file>'
 go run ./cmd/termcp-harness agent loop --runtime http://127.0.0.1:8787 --id '<agent-session-id>' --input-file '<message-file>' --max-iterations 8 --max-tool-calls 16 --token-file '<private-token-file>'
 go run ./cmd/termcp-harness agent resume --runtime http://127.0.0.1:8787 --id '<restarted-agent-session-id>' --token-file '<private-token-file>'
@@ -69,9 +75,28 @@ npm ci
 npm run check
 npm test
 Set-Location ..
-wails build -m -nosyncgomod -nopackage -clean
+wails build -m -nosyncgomod -clean
+.\build\bin\termcp-harness-desktop.exe
+.\build\bin\termcp-harness-desktop.exe --core-bundle '<core-bundle-dir>' --tool-policy-file .\examples\tool-policy.readonly.json --model-endpoint http://127.0.0.1:11434/v1/chat/completions --model-id '<model-id>' --model-token-file '<private-model-token-file>'
 .\build\bin\termcp-harness-desktop.exe --runtime http://127.0.0.1:8787 --approval-token-file '<private-token-file>'
+Set-Location ..
+.\desktop\scripts\package-release.ps1 -CoreSourceDir '<core-source-directory>'
+.\desktop\scripts\package-release.ps1 -CoreSourceDir '<core-source-directory>' -AllowDirty -SkipTests -SmokeTest
 ```
+
+Desktop 无 `--runtime` 时内嵌启动 Harness Runtime，并默认查找 `<desktop-exe-dir>\core\manifest.json`。只有确认“退出 Harness”才停止本次 Desktop 拥有的 Runtime/Core；“最小化到任务栏”不会停止任务。`--runtime` 用于显式连接外部 Headless Runtime。
+
+发布脚本默认拒绝 dirty Harness/Core；`-AllowDirty` 只能生成 `release.json` 标记为 `candidate` 的产物。`-SmokeTest` 从包内入口启动并核验相邻 Core 的 `managed` 身份。
+
+重新生成桌面与 CLI 的 Windows 图标（从仓库根目录执行）：
+
+```powershell
+.\desktop\scripts\generate-app-icon.ps1
+go run .\desktop\scripts\embed-windows-resource.go
+go build -o .\termcp-harness.exe .\cmd\termcp-harness
+```
+
+Wails 构建不能使用 `-nopackage`，否则会跳过 Windows 资源编译，导致 EXE 没有项目图标等资源。
 
 Desktop 前端检查单条命令：
 
@@ -89,6 +114,7 @@ go test ./internal/model -count=1
 go test ./internal/agentsession -run '^TestSessionModelLoop' -count=1
 go test ./internal/eventlog -run '^TestDiagnosticEvictionIsVisible$' -count=1
 go test -race ./internal/atomicfile -count=1 -v
+go test ./cmd/termcp-harness -run '^TestRecovery' -count=1 -v
 go test -race ./internal/eventlog -run TestConcurrentPersistentAppendsKeepUniqueSequences -count=100
 go test -race ./internal/agentsession -run TestFileStoreConcurrentSavesRemainReadable -count=50
 $env:TERMCP_CORE_MCP_URL = 'http://127.0.0.1:18765/stream'
@@ -190,6 +216,7 @@ Desktop 的审批 token 只从受限文件读入 Go 进程内存；前端只能�
 - `docs/adr/ADR-021-agent-cancellation.md` — **Accepted / 本地闭环已实现**：Agent 停止任务、派发门、远端未知风险和 Desktop 人工接管。
 - `docs/adr/ADR-022-cross-store-recovery-manifest.md` — **Accepted / 首个切片已实现**：跨 Store 恢复清单、同代次证据和部分恢复诊断。
 - `docs/development/BRANCHING.md` — 上游分支观察与 Harness 的 trunk-based 分支策略。
+- `docs/development/MCP-MANAGEMENT-v0.2.0.md` — MCP 新增/编辑/移除、持久化、生命周期、安全与验收计划；不进入 `v0.1.9`。
 - `docs/contracts/README.md` — Core 与 Harness 公开契约、来源、版本和验证记录规范。
 - `docs/contracts/harness/v0.1/core-instance.md` — Core 身份、external/managed/unverified 所有权、实例键和重启检测。
 - `docs/contracts/harness/v0.1/state-machines.md` — 工具调用、审批、结果未知与自动重试语义；受控 MCP 流水线、审批协调、Core 结构化执行结果解析与 Session 结果恢复内核已接入。

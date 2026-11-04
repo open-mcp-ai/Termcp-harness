@@ -21,7 +21,12 @@ func TestTermcpCoreReadOnlyPipelineIntegration(t *testing.T) {
 
 	host := mcpcontrol.NewHost()
 	defer host.Close()
-	spec := mcpcontrol.Spec{ID: "termcp-core", Name: "Termcp Core", Endpoint: endpoint}
+	spec := mcpcontrol.Spec{
+		ID:        "termcp-core",
+		Name:      "Termcp Core",
+		Endpoint:  endpoint,
+		AuthToken: coreAuthToken(t),
+	}
 	if _, err := host.Register(spec); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}

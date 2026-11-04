@@ -33,7 +33,7 @@ Desktop 在 Wails Go 进程维护 SSE 连接和重连：
 - 同连接和同一 Runtime 实例内按 `sequence` 去重和排序。
 - Runtime 实例变化时关闭旧订阅并从新实例最新 cursor 重开。
 - 诊断事件淘汰或本地队列 lag 必须可见；不得静默丢控制事件。
-- 配置 Event Journal 持久化后，Runtime 重启可恢复保留窗口和 sequence；客户端 cursor 持久化仍未实现，因此 Desktop 重启后的历史完整性仍无法承诺。
+- 配置 Event Journal 持久化后，Runtime 重启可恢复保留窗口和 sequence。Desktop 将最后消费的 cursor 按 Runtime endpoint 和 instance ID 保存到本机 localStorage；同一实例重启 Desktop 可继续补拉，实例变化、记录损坏或 cursor 超前时重置到最新 sequence。该机制仍不承诺恢复 Event Journal 已淘汰的区段。
 
 ## 4. 验证
 
@@ -49,6 +49,6 @@ Desktop 在 Wails Go 进程维护 SSE 连接和重连：
 
 ## 5. 尚未完成
 
-- 客户端 cursor 持久化。
+- Event Journal 已淘汰区段的归档恢复和客户端跨 Runtime 轨迹连续性。
 - 事件归档、压缩和分段存储。
 - 多 Runtime 实例路由和认证订阅。

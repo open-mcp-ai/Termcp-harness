@@ -500,7 +500,8 @@ func firstPendingMessage(candidates []reviewPendingCandidate) string {
 }
 
 func termReviewPending(text string) bool {
-	return strings.HasPrefix(text, "TERM/1 202 Accepted") && strings.Contains(text, "Submitted for review:")
+	return strings.HasPrefix(text, "TERM/1 202 Accepted") &&
+		(strings.Contains(text, "Submitted for review:") || strings.Contains(text, "Submitted for review."))
 }
 
 func termReviewMessage(text string) string {

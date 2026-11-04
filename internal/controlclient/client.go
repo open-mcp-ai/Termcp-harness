@@ -18,6 +18,7 @@ import (
 	"github.com/open-mcp-ai/termcp-harness/internal/coreinstance"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/mcpdiscovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/recovery"
 	"github.com/open-mcp-ai/termcp-harness/internal/runtime"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
@@ -209,6 +210,65 @@ func (c *Client) Core(ctx context.Context) (CoreState, error) {
 		return CoreState{}, err
 	}
 	return state, nil
+}
+
+func (c *Client) DiscoverMCP(ctx context.Context) (mcpdiscovery.Snapshot, error) {
+	if c == nil {
+		return mcpdiscovery.Snapshot{}, errors.New("control client is required")
+	}
+	var snapshot mcpdiscovery.Snapshot
+	if _, err := c.getJSON(ctx, "/v1/mcp/discovery", []int{http.StatusOK}, &snapshot); err != nil {
+		return mcpdiscovery.Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (c *Client) RegisterDiscoveredMCP(
+	ctx context.Context,
+	id string,
+	token string,
+) (mcpcontrol.Snapshot, error) {
+	if c == nil {
+		return mcpcontrol.Snapshot{}, errors.New("control client is required")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > 256 {
+		return mcpcontrol.Snapshot{}, errors.New("discovered MCP server ID is required")
+	}
+	if err := validateMutationToken(token); err != nil {
+		return mcpcontrol.Snapshot{}, err
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.endpoint+"/v1/mcp/discovery/"+url.PathEscape(id)+"/register",
+		nil,
+	)
+	if err != nil {
+		return mcpcontrol.Snapshot{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := c.decisionHTTP.Do(request)
+	if err != nil {
+		return mcpcontrol.Snapshot{}, err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	if err != nil {
+		return mcpcontrol.Snapshot{}, err
+	}
+	if len(body) > maxResponseBytes {
+		return mcpcontrol.Snapshot{}, fmt.Errorf("response exceeds %d bytes", maxResponseBytes)
+	}
+	if response.StatusCode != http.StatusCreated {
+		return mcpcontrol.Snapshot{}, fmt.Errorf("MCP registration returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var snapshot mcpcontrol.Snapshot
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return mcpcontrol.Snapshot{}, fmt.Errorf("decode MCP registration response: %w", err)
+	}
+	return snapshot, nil
 }
 
 func (c *Client) AgentSession(ctx context.Context, id string) (AgentSessionEnvelope, error) {

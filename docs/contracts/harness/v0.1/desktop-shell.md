@@ -1,6 +1,6 @@
 # Terminal Workspace Shell v0.1（草案）
 
-> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察、异步模型任务启动、Agent 停止任务与人工接管、安全检查点人工恢复、持久化模型回复读取、审批决定、审批时间线、审批历史恢复、`waiting_execution` 恢复交互、Harness Canvas、多 Space 创建/切换/重命名/删除、Workspace Recipe v1 导入导出、跨 Workspace 布局复制、有界布局撤销/重做、真实 Core Terminal、SSE 实时事件订阅、同 Runtime 实例客户端 cursor 恢复和可选 Event Journal 恢复已实现；面板跨 Session 上下文跟随/锁定、关闭视图提示和服务端审批回执已接入；Recipe 跨版本迁移尚未实现。
+> 状态：Wails 桌面壳、真实 Runtime 读取、Session/审批观察、异步模型任务启动、Agent 停止任务与人工接管、安全检查点人工恢复、持久化模型回复读取、审批决定、审批时间线、审批历史恢复、`waiting_execution` 恢复交互、Harness Canvas、多 Space 创建/切换/重命名/删除、Workspace Recipe v1 导入导出、跨 Workspace 布局复制、有界布局撤销/重做、真实 Core Terminal、Codex global MCP 发现与受保护注册、SSE 实时事件订阅、同 Runtime 实例客户端 cursor 恢复和可选 Event Journal 恢复已实现；面板跨 Session 上下文跟随/锁定、关闭视图提示和服务端审批回执已接入；Recipe 跨版本迁移尚未实现。
 >
 > 实现：`desktop/`
 
@@ -22,6 +22,7 @@ React/TypeScript/Vite 使用 `package-lock.json` 固定实际依赖。`@xterm/xt
 
 - 默认界面语言为简体中文（`zh-CN`），文案集中在 `desktop/frontend/src/i18n.ts`。
 - 初始窗口为 `1280×800`，最小窗口为 `900×600`，适配 1920×1024 工作区。
+- 自动化验收可为 Desktop 进程设置 `TERMCP_HARNESS_WEBVIEW_DATA_PATH=<isolated-dir>`，为 Wails/WebView2 使用独立用户数据目录；未设置时沿用 Wails 默认目录。
 
 ## 3. Wails 桥接面
 
@@ -36,6 +37,8 @@ React/TypeScript/Vite 使用 `package-lock.json` 固定实际依赖。`@xterm/xt
 | `CloseEventStream()` | 关闭本地 SSE 订阅 |
 | `RuntimeEndpoint()` | 返回当前回环 Harness Runtime 地址 |
 | `ApprovalControlAvailable()` | 报告 Go 进程是否已安全载入审批 token |
+| `DiscoverMCP()` | 扫描本机受支持的 MCP 配置并返回无凭据发现快照 |
+| `RegisterDiscoveredMCP(id)` | 使用 Go 内存中的 Bearer token 显式注册一个可加载的发现项 |
 | `DecideApproval(id, revision, decision)` | 提交一次批准或拒绝，不向前端返回 token |
 | `RefreshApprovalExecution(id)` | 只读核对 Core Execution，并允许 Session 从可信证据恢复；不重提审批或工具调用 |
 | `ReconcileApproval(id)` | 对 `unknown` 审批执行一次只读 Core Lookup；不提交决定或重放工具调用 |
@@ -121,6 +124,8 @@ http://127.0.0.1:8787
 - 每条审批展示基于精确 `approval_id`、`call_id` 或 `correlation_id` 的本地时间线，并明确“序号不代表远端执行顺序”；当前窗口之外的历史保持不可见。
 - `waiting_execution` Session 在可信批准且 token 已加载时提供“核对并恢复”。该动作只读取权威 Execution，不重提审批或当前工具调用；读取到可信成功证据时可继续尚未执行的后续步骤。
 - Terminal 从 Agent Session 的 `core_session_id` 和 Core Shell 列表建立显式绑定；多 Shell 可选择，不按当前 Session 或时间推断。
+- MCP 面板可手动扫描 Codex global MCP，显示 `global/codex` tags、transport、可用性和受限原因；仅对可加载且当前未注册的项显示“注册并连接”。
+- MCP 发现不展示 command、args、env、header、token 或配置路径，也不会自动启动发现的 stdio 命令。
 - 没有可信 running Shell 时 Terminal 显示 `NO TRUSTED SHELL` 等明确空态，不显示仿真命令提示符；只有绑定真实 Core Shell 后才出现 xterm 和真实 Prompt。
 - xterm 接收保序输出，人工输入通过固定 Go 桥发送；resize 同步到 Core PTY，`shell_activity` 区分人工与 Agent 输入。
 - 首次恢复 Core 保留输出的最后 512 KiB；历史截断、输出缓冲缺口、`terminal_done` 和 WebSocket 断线分别可见。
@@ -157,12 +162,22 @@ http://127.0.0.1:8787
 
 视觉验证使用真实临时 Harness Runtime 和 Wails 窗口完成。事件展开与筛选空态通过键盘可访问的控件验证。
 
+**验证进展（2026-11-03）：** 已通过真实 Kali → Debian 链路和可控代理验证：Core 接受审批决定后丢弃响应时，Harness 收敛为 `unknown`，Wails 显示“结果未知”；断线结束后只读核对收敛为 `approved/submitted`，Session 继续完成；Wails 进程重开后恢复同一 Session、布局和事件轨迹。重复/乱序/旧 revision 回执、停止请求与断线竞态、决定提交期间 Runtime 重启仍未完成组合验证，由 `UX-BL-010` 继续跟踪。
+
 ## 6. 尚未实现
 
-- 含终端游标扩展的 Core 正式发布同步、自动重连和认证凭据引用。
-- Harness Runtime 自动启动、停止和实例所有权管理。
-- Core 子进程自动启动、停止和 managed 所有权创建。
+- 含终端游标扩展的 Core 正式发布同步、长时间重连压力测试和凭据轮换。
+- 安装器、Core 补丁包分发、签名、回滚和运行中升级。
 - Desktop 认证、远程 Harness Runtime、TLS 和凭据引用。
 - MCP 连接配置、能力变更通知和持久会话。
 - Desktop 侧模型 endpoint 配置、流式输出、自动恢复和完整人工接管控制。
+- OpenCode/Claude/VS Code 等客户端配置、用户指定目录 MCP 扫描、已注册 MCP 卸载与配置变更检测。
 - 安装包、签名、升级、日志导出和跨平台回归。
+
+## 7. 内嵌 Runtime 与产品退出
+
+- Desktop 默认不再要求用户预先启动外部 Runtime。Wails 通过单实例检查并进入 `OnStartup` 后，在同一 Desktop 进程内启动 Harness Runtime。
+- Runtime 通过 `corebundle.Discover` 查找 Desktop 可执行文件旁的 `core/`，或使用显式 `--core-bundle`。Core 仍是独立受管子进程，只通过公开 HTTP/WebSocket/MCP 契约访问。
+- Runtime 使用动态回环端口并把实际 endpoint 交给同进程 Desktop；审批 Bearer token 只驻留 Runtime 与 Desktop Go 内存，不下发前端。
+- 用户点击关闭或触发系统关闭时，Desktop 显示“退出 Harness / 最小化到任务栏 / 取消”。最小化保留 Runtime、Core 和活动任务；确认退出才停止本次 Desktop 拥有的子进程。
+- `--runtime` 仍用于连接外部 Headless Runtime；外部模式下 Desktop 不拥有 Runtime 或 Core，也不应把连接失败描述成已启动产品。

@@ -131,7 +131,7 @@ Harness 只把显式 `execution` 与该审批关联；不能从终端文本、�
 - 自动重试没有接入执行器；一次 `unknown` 不会触发第二次派发。
 - 工具参数和结果正文不写入普通事件日志；事件只记录调用 ID、来源、工具名、副作用类别、状态、revision、策略原因和结果字节数等元数据。
 - opt-in 真实 Core 测试已覆盖 `idempotent_write` 的重复覆盖最终状态，以及 `side_effect` 成功、上下文超时和调用侧 MCP Host 断开后的 `unknown` 与“无自动重试”。断开测试不等同于远程网络分区。该测试不证明 Core 提供 idempotency key、operation ID 或可信的未执行查询。
-- Core 的 `TERM/1 202 Accepted` + `Submitted for review:` 或结构化 `review_pending=true, approved=false` 会收敛为 `approval_pending`，不会记为 `succeeded`。该映射只证明本地不伪造执行成功，不代表 Runtime 已能管理审批决定。
+- Core 的 `TERM/1 202 Accepted` + `Submitted for review:`（文件/转发）或 `Submitted for review.`（shell 输入），或结构化 `review_pending=true, approved=false` 会收敛为 `approval_pending`，不会记为 `succeeded`。该映射只证明本地不伪造执行成功，不代表 Runtime 已能管理审批决定。
 - 当前 Termcp 0.2.8 开发基线在 review 结果中提供 `approval_id`，并可附带 `session_id` 和 `expires_at`。Harness 只使用显式字段；字段缺失或冲突时保持关联未知，不使用版本号推断能力。
 - `internal/approval` 的协调器只登记 `trusted` 关联，按 revision 串行提交决定，并在远端超时、断连或矛盾结果时收敛为 `unknown`；收到可信远端终态后才进入 `approved`、`rejected`、`expired` 或 `cancelled`。
 - 配置 `--approval-store-file` 后，协调器原子保存可信关联、决定 revision 和最后已知 Execution。重启时 `pending` / `submitting` fail-closed 收敛为 `unknown`，不恢复为可决定请求。

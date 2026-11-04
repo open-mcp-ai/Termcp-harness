@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/open-mcp-ai/termcp-harness/internal/eventlog"
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/tokenfile"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
@@ -157,7 +158,12 @@ func runWriteEffectTests(t *testing.T, host *mcpcontrol.Host, journal *eventlog.
 func connectCoreHost(t *testing.T, endpoint string) *mcpcontrol.Host {
 	t.Helper()
 	host := mcpcontrol.NewHost()
-	spec := mcpcontrol.Spec{ID: "termcp-core", Name: "Termcp Core", Endpoint: endpoint}
+	spec := mcpcontrol.Spec{
+		ID:        "termcp-core",
+		Name:      "Termcp Core",
+		Endpoint:  endpoint,
+		AuthToken: coreAuthToken(t),
+	}
 	if _, err := host.Register(spec); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -173,6 +179,19 @@ func connectCoreHost(t *testing.T, endpoint string) *mcpcontrol.Host {
 		t.Fatalf("enable: %v", err)
 	}
 	return host
+}
+
+func coreAuthToken(t *testing.T) string {
+	t.Helper()
+	path := strings.TrimSpace(os.Getenv("TERMCP_CORE_MCP_AUTH_TOKEN_FILE"))
+	if path == "" {
+		return ""
+	}
+	token, err := tokenfile.Read(path)
+	if err != nil {
+		t.Fatalf("read Core MCP auth token: %v", err)
+	}
+	return token
 }
 
 func invokeRead(t *testing.T, pipeline *toolpipeline.Pipeline, callID, sessionID, path string) string {

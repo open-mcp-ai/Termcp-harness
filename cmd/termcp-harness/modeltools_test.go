@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/mcpcontrol"
+	"github.com/open-mcp-ai/termcp-harness/internal/runtimeapp"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolcall"
 	"github.com/open-mcp-ai/termcp-harness/internal/toolpipeline"
 )
@@ -32,7 +33,7 @@ func TestPolicyModelToolProviderExposesOnlyLoadedAllowlistedTools(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &policyModelToolProvider{host: host, policy: policy}
+	provider := &runtimeapp.PolicyModelToolProvider{Host: host, Policy: policy}
 	tools := provider.ModelTools()
 	if len(tools) != 1 {
 		t.Fatalf("tools = %+v", tools)
@@ -60,7 +61,7 @@ func TestPolicyModelToolProviderWithholdsMixedResultPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools := (&policyModelToolProvider{host: host, policy: policy}).ModelTools()
+	tools := (&runtimeapp.PolicyModelToolProvider{Host: host, Policy: policy}).ModelTools()
 	if len(tools) != 1 || tools[0].ExposeResult {
 		t.Fatalf("mixed policy tools = %+v", tools)
 	}

@@ -4,6 +4,61 @@ Termcp Harness 的重要功能与架构变更记录。
 
 当前版本在 `dev` 分支持续迭代，不承诺跨版本兼容。版本号采用语义化版本的基础形式，每次可独立验收的功能里程碑递增补丁号。
 
+## [v0.1.7] - 2026-11-03
+
+### Added
+
+- 新增 headless `recovery status`，可检查 Event、Session、Approval Store 与恢复清单的一致性，不启动 Runtime。
+- 新增 `recovery rebaseline --confirm`，允许用户在 Runtime 停止后显式以当前可读 Store 建立新的恢复基线。
+- 重建结果同时返回重建前后的恢复快照；不可读 Store、缺失清单参数或未确认操作会被拒绝。
+- 新增原创“猫耳终端”图标，提供 SVG 源、1024px PNG、16–256px 多尺寸 ICO，并同时嵌入 Wails Desktop 与 Windows CLI。
+- 新增本机 Codex global MCP 发现：返回来源、`global/codex` tags、transport、可加载性和受限原因，不暴露 command、args、env、header、token 或配置路径。
+- 新增受 Bearer 保护的发现项显式注册；支持解析受约束的 Windows npm `.cmd` shim，并把注册、连接、能力读取和启用继续保持为独立状态。
+
+### Fixed
+
+- Runtime 不可达时不再使用默认绿色状态点；Runtime、Core 和 MCP Servers 统一显示灰色“状态未知”，不再把无法读取的 Core 误报为“未配置”。
+- 自定义标题栏的最大化按钮读取真实窗口状态，最大化时显示叠加方框并改为“还原窗口”，恢复后重新显示单方框和“最大化”。
+- Core 的 shell 输入 review 结果使用 `Submitted for review.` 时仍会收敛为 `approval_pending`，不再因只识别冒号形式而误记为 `succeeded`。
+- SSE 进入重连状态时，Desktop 不再保留旧的“Runtime 运行中”绿色状态；Runtime、Core 和 MCP 统一降级为状态未知。
+
+### Changed
+
+- Runtime、Desktop 前端和 Wails 产品版本统一为 `v0.1.7`。
+- 修复 Wails 构建使用 `-nopackage` 跳过 Windows 资源编译、导致 EXE 无项目图标的问题。
+- 显式重建不会合并 Store、回放业务状态、修复损坏文件或自动恢复审批、工具调用和 Agent Loop。
+- 重建输出不返回 Store 路径或业务正文；失败时保留原恢复清单。
+
+### Verification
+
+- 恢复 CLI 定向测试覆盖未验证状态只读检查、缺少确认、代次不一致重建、不可读 Store 拒绝和路径脱敏。
+- `go test ./cmd/termcp-harness -run '^TestRecovery' -count=20` 通过。
+- `go test -race ./internal/recovery -count=1 -v` 通过。
+- `go test -race ./... -count=1`、`go vet ./...` 和 `go build ./...` 通过。
+- `go mod tidy -diff` 无差异。
+- `npm run check` 通过。
+- `npm test` 通过，共 46 项；`npm run build` 通过。
+- 在复用已独立构建的前端产物后，`wails build -m -nosyncgomod -clean -s -skipbindings` 成功生成带 Windows 图标资源的桌面二进制。
+- 图标脚本连续运行两次生成相同 PNG/ICO SHA-256；amd64/arm64 CLI 资源重新生成成功，CLI 与 Wails 产物均提取到 32×32 图标。
+- 真实本机 Codex global 发现识别 6 个 MCP，其中远程 HTTP 2 个被明确标记为当前 v1 不兼容；`termcp` npm stdio shim 经受保护注册后达到 `connected`、能力已读取、enabled 和 `ready=true`，工具数为 1。
+- 真实 Core `v0.2.8-rc.4.0.20261030183716-938c53f4334d+dirty` 通过只读、12 路并发、幂等写入、副作用超时未知、审批批准/拒绝/并发决定/过期、Session 关闭后 `cancelled`、Terminal 历史/实时连续性、20,000 行洪峰和 Shell 正常结束测试。
+- Kali 专用 Session 通过 POSIX 幂等写入、副作用超时 `unknown`、20,000 行输出洪峰、调用取消和 MCP 传输断连测试。
+- 真实 Wails 窗口完成启动、重启、专用 Agent Session 选择、Core Session 关联、Terminal Shell 自动连接，以及在窗口中输入并观察到 `echo harness-wails-e2e` 输出。
+- 真实 Kali → Debian 13 靶机链路完成审批断线时序验证：Core 接受决定后代理丢弃响应，Harness 收敛为 `unknown`，Wails 显示“结果未知”；断线窗口结束后只读核对收敛为 `approved/submitted`，Session 自动完成。重开 Wails 后恢复同一 Session、布局和截至 `sequence=27` 的事件轨迹；停止并重启 Runtime 后，Wails 从“状态未知”自动恢复为在线，并明确显示“部分恢复”警示。
+- 从 CLI 与 Wails 两个 Windows EXE 提取到新图标；Wails 正常资源构建与 CLI 的 amd64/arm64 `.syso` 资源均通过验证。
+
+### Known limitations
+
+- 命令在检查与写入之间没有跨进程 Store 锁；必须在 Harness Runtime 完全停止后使用。活动锁硬化项登记为 `HARNESS-RECOVERY-LOCK-001`，当前 Deferred。
+- `complete` 只证明当前文件集合与新建基线一致，不证明各 Store 的业务内容可以安全继续。
+- 不提供跨文件原子事务、自动恢复或自动修复。
+- Kali Session 关闭后的审批终止已由 Windows 专用 Session 严格契约测试覆盖；本轮未额外重跑 Kali 版本。
+- 图标生成脚本不解析 SVG；矢量参考和脚本中的绘制步骤需要同步维护。
+- Vite 主 JavaScript chunk 约 625 KiB（gzip 约 177 KiB），生产构建成功但保留大小告警；Terminal 按需加载登记为 `UX-BL-009`，当前 Deferred。
+- 真实审批断线与 Wails 跨进程恢复已验证；重复/乱序/旧 revision 回执注入、决定提交期间 Runtime 重启及新事件到达时的 cursor 连续性仍待补测。
+- MCP 发现当前只支持 Codex global；OpenCode、其他客户端、用户指定目录、已注册项卸载和配置变更检测尚未实现。
+- MCP 新增、编辑、移除、Registry 持久化和重启恢复计划在 `v0.2.0`，不进入 `v0.1.9` 推送范围；见 `docs/development/MCP-MANAGEMENT-v0.2.0.md`。
+
 ## [v0.1.6] - 2026-11-02
 
 ### Added

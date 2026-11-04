@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/open-mcp-ai/termcp-harness/internal/controlclient"
+	"github.com/open-mcp-ai/termcp-harness/internal/runtimeapp"
 )
 
 func TestAppBootstrapReadsRuntimeContract(t *testing.T) {
@@ -85,6 +86,53 @@ func TestAppBootstrapReadsRuntimeContract(t *testing.T) {
 	}
 	if got := app.RuntimeEndpoint(); got != server.URL {
 		t.Fatalf("RuntimeEndpoint() = %q, want %q", got, server.URL)
+	}
+}
+
+func TestPendingAppStartsEmbeddedRuntimeOnlyDuringStartup(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	called := false
+	app := newPendingApp(func(context.Context) (*controlclient.Client, string, *runtimeapp.App, error) {
+		called = true
+		client, err := controlclient.New(server.URL)
+		return client, "0123456789abcdef0123456789abcdef", nil, err
+	})
+	if called {
+		t.Fatal("embedded runtime started before Wails startup")
+	}
+	app.startup(context.Background())
+	if !called {
+		t.Fatal("embedded runtime startup hook was not called")
+	}
+	if !app.ApprovalControlAvailable() || app.RuntimeEndpoint() != server.URL {
+		t.Fatal("startup did not install embedded Runtime client")
+	}
+}
+
+func TestAppCloseRequestRequiresExplicitQuit(t *testing.T) {
+	client, err := controlclient.New("http://127.0.0.1:8787")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := newApp(client, "")
+	var events []string
+	app.emitEvent = func(event string) {
+		events = append(events, event)
+	}
+	app.WindowRequestClose()
+	if len(events) != 1 || events[0] != "app:close-requested" {
+		t.Fatalf("events = %v", events)
+	}
+	if !app.beforeClose(context.Background()) {
+		t.Fatal("normal close was not intercepted")
+	}
+	if len(events) != 2 {
+		t.Fatalf("close request events = %v", events)
+	}
+	app.allowClose.Store(true)
+	if app.beforeClose(context.Background()) {
+		t.Fatal("explicit quit was intercepted")
 	}
 }
 

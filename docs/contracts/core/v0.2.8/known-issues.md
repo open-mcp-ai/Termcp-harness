@@ -27,6 +27,7 @@
 - 验证方式：运行中的本机 Core、Kali POSIX session、MCP Streamable HTTP、公开 HTTP API
 - 当前开发分支：`fix/approval-lifecycle`
 - 当前开发提交：`f6cefec`
+- 当前集成基线：本地 `codex/core-local-integration` / `d8261c7`（`938c53f` + terminal watch cursor；未 push）
 - 本地验证（2026-10-30）：`go test -race ./internal/approval ./internal/session ./internal/webui -count=1` 通过
 - 上游 PR #226 已采纳；当前 Termcp 开发基线包含审批关联契约
 - Harness E2E（2026-10-30）：在独立端口启动当前 Termcp 开发基线，剩余 7 个 opt-in 测试全部通过
@@ -107,7 +108,7 @@
 - 状态：**FIXED_LOCAL / E2E_VERIFIED（Core 本地源码、Harness Desktop 桥和真实隔离实例均已验证；正式 Core 发布仍待同步）**
 - 严重度：**中，阻塞“无缺口终端恢复”承诺**
 - 首次确认：2026-10-31
-- 本地修复：2026-11-01，`fix/terminal-watch-cursor`
+- 本地修复：2026-11-01，`fix/terminal-watch-cursor`；本地集成 commit `d8261c7`（2026-11-04，未 push）
 - 公开契约：
   - `GET /api/shells/{id}/output-range` 返回 `start`、`end`、`total` 和字节窗口。
   - WebSocket `watch_add` 增加 `watch_ready`，返回订阅后的第一个可信绝对字节游标。
@@ -118,7 +119,7 @@
   - Harness 等待确认后用该游标读取截至该位置的历史，再严格校验后续终端区间连续性。
   - 重复订阅会替换 watch generation；旧泵不能在新确认后发送 terminal 或 `terminal_done`。
   - 缺失游标、空帧跳位、区间缺口、历史结束不匹配和结束游标不匹配均收敛为 `unknown`。
-- 影响：本地开发基线已消除首开与重复订阅的已知盲区；断线后的自动重连和正式 Core 发布兼容性仍未完成。
+- 影响：本地开发基线已消除首开与重复订阅的已知盲区；Harness 侧自动重连和精确缺口恢复已实现并通过可断线 WebSocket 测试，正式 Core 发布兼容性仍未完成。
 - Harness 应对：
   - 只恢复 `watch_ready` 游标之前最多 512 KiB，并显式显示更早历史未载入。
   - 不根据文本相似度、时间窗口或帧到达顺序补洞。
@@ -131,9 +132,11 @@
   - Harness：`TestSessionPersistenceFailureBeforeToolDispatchRecoversUnknownWithoutSideEffect` 与 `TestSessionPersistenceFailureAfterToolExecutionRecoversUnknownWithoutReplay` 通过。
   - 真实隔离 E2E：Core 本地构建 `+dirty` 与 Harness Desktop Go 桥通过；历史恢复 488,728 字节，实时 marker 可观测，Shell 从游标 965 正常结束于 2406。
   - 真实洪峰 E2E：20,000 行输出共 482,765 字节，首字节 11 ms，总计 2.266 秒，218 次轮询，`dropped_output_bytes=0`。
+  - Harness：`TestManagerCoreReconnectIntegration` 通过；TCP 代理在连续输出中断开连接，桥进入 `reconnecting`，使用新 `watch_ready.cursor` 分页补齐断线区段后恢复到游标 `4026`。
+  - Harness：`TestManagerReconnectGapFailsClosed`、`TestManagerRecoversGapInBoundedPages` 和重连期间拒绝输入/resize 的单元测试通过；超过 4 MiB、游标倒退或区间不一致时进入 `unknown`。
 - 未完成验证：
   - 扩展尚未进入正式 Core v0.2.8 发布包。
-  - 自动重连及断线补洞仍未实现。
+  - 长时间断网、Core 重启和大规模缺口的重连压力测试尚未完成。
 - 关闭条件：
   - 包含该契约的 Core 构建完成真实 Desktop 初始历史、实时输出、Shell 结束和 20,000 行洪峰复验。**已满足本地验证条件。**
   - 正式发布包包含对应字段和关闭条件测试。
@@ -260,3 +263,26 @@ go test ./internal/toolpipeline -run '^TestTermcpCoreApprovalSessionDeathStateCo
 - 审批严格契约：`TestTermcpCoreApprovalExpiryContract` 与 `TestTermcpCoreApprovalSessionDeathStateContract` 通过。
 - Harness 回归：`go test -race ./... -count=1` 通过；`go vet ./...`、`go build ./...` 通过。
 - 清理：组合 Harness/Core 按精确 PID/端口停止；组合临时 token、store、日志、二进制和测试目录已删除；`8788`、`18767` 无 LISTENING。
+
+## 12. v0.1.7 真实 Core 与 Wails 复验（2026-11-03）
+
+- 当前安装实例：`http://127.0.0.1:18765`，版本 `dev-938c53f`。该实例的审批、Windows 写入和 `unknown` 收敛测试通过，但不包含终端游标补丁；`TestTerminalBridgeCoreIntegration` 与 `TestTerminalBridgeCoreOutputFlood` 均失败在等待 `watch_ready` 的订阅读取超时。这是 `CORE-0.2.8-004` 的发布同步缺口，不是 Harness 测试被跳过。
+- 集成实例：从 `D:\Harness\.worktrees\core-local-integration` 构建 `v0.2.8-rc.4.0.20261030183716-938c53f4334d+dirty`，独立使用 `127.0.0.1:18767` 和临时数据目录。只读、12 路并发、Windows 幂等写入、副作用超时 `unknown`、审批批准/拒绝/并发决定/过期、Session 关闭后 `cancelled` 均通过。
+- Terminal E2E：历史恢复 `start=0,end=2495`；20,000 行输出 `484665` 字节、首字节 `11ms`、总计 `5.122s`、492 次轮询、无丢弃；Shell 从 `490658` 正常结束于 `cursor=491183`。
+- 真实 Wails：生产二进制启动、关闭、重启后恢复 Workspace；选择专用 Agent Session 后显示可信 Core Session ID，Terminal 自动连接新 Shell，并在窗口中输入 `echo harness-wails-e2e` 后观察到输出。
+- Kali 启动后补跑 `TestTermcpCorePOSIXWriteEffectsIntegration`、`TestTermcpCoreOutputFloodIntegration`、`TestTermcpCoreCancellationIntegration` 与 `TestTermcpCorePOSIXTransportDisconnectIntegration`，全部通过；专用 effect/observer Session 仅写入 `/tmp` 测试文件并在结束后删除。
+- 清理：本次创建的 10 个专用 Core Session 均以精确 ID 删除；Harness/Core 测试进程按精确 PID 停止；`8787`、`8788`、`18767` 已关闭；一次性 token、日志、二进制和临时数据目录已删除。既有 `18765` Core 未停止。
+
+## 13. Windows + Kali VM 认证与终端复验（2026-11-04）
+
+- Core：测试时使用 `v0.2.8-rc.4.0.20261030183716-938c53f4334d+dirty`；同一工作树随后提交为干净的本地 `d8261c7`，并重新生成 `v0.2.8-rc.4.0.20261104034440-d8261c72f13e` 组合包。loopback `127.0.0.1:18765` 使用既有数据目录中配置的 `internal`、`kali-gc` 连接档案；所有测试 Session 均新建为专用 Session。
+- Harness：临时 headless Runtime `127.0.0.1:8787`，通过公开 Control API、MCP 和 Terminal 接口使用同一 Core；Core Bearer 凭据只通过受限临时文件和进程内引用传递。
+- Windows 工具链：`TestTermcpCoreWriteEffectsIntegration` 通过，覆盖幂等覆盖写入、副作用成功和超时 `unknown`。
+- Kali 工具链：`TestTermcpCorePOSIXWriteEffectsIntegration`、`TestTermcpCoreOutputFloodIntegration`、`TestTermcpCoreCancellationIntegration` 和 `TestTermcpCorePOSIXTransportDisconnectIntegration` 全部通过；临时文件只写入 `/tmp` 并在测试内删除。
+- 控制面：`TestTermcpCoreReadOnlyPipelineIntegration` 和 12 路 `TestTermcpCoreConcurrentControlTraceIntegration` 通过。
+- 审批：`TestTermcpCoreApprovalReviewIntegration`、`TestTermcpCoreApprovalExpiryContract`、`TestTermcpCoreApprovalSessionDeathStateContract` 全部通过。过期审批不执行写入；关闭 Session 后审批可观察为 `cancelled`。
+- Kali Terminal 桥：`TestTerminalBridgeCoreIntegration` 通过，首次历史 `start=0,end=243992`，实时输入 marker 可观测；`TestTerminalBridgeCoreShellExit` 通过，游标 `690 → 887`。
+- Windows Terminal 桥：`TestTerminalBridgeCoreOutputFlood` 通过，20,000 行共 `240660` 字节、首字节 `11ms`、总计 `4.282s`、413 次轮询、无缓冲丢弃；`TestManagerCoreReconnectIntegration` 通过并恢复到游标 `243916`。
+- 内嵌路径：`TestEmbeddedRuntimeTerminalBridgeIntegration` 通过。Runtime 启动 bundled Core 后，把受管 Core Bearer 凭据保留在同进程内存并交给固定 Terminal Bridge；终端 GET 与 WebSocket 均完成鉴权。
+- 清理：7 个专用 Core Session 均通过公开 DELETE 删除；临时 Harness/Core 进程按精确 PID 停止，`8787` 与 `18765` 端口释放，临时 token、store、日志和二进制目录删除。
+- 边界：本轮验证的是本机 Windows 主机与既有 Kali VM 连接档案，不证明远端/TLS Core、凭据轮换、长时间网络分区或正式 Core 发布包。Core 源码已在本地 `d8261c7` 冻结且工作树干净，但尚未 push 或进入上游发布流程。

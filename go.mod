@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/mark3labs/mcp-go v0.50.0
+	github.com/tc-hib/winres v0.3.1
 	github.com/wailsapp/wails/v2 v2.15.0
 	golang.org/x/sys v0.46.0
 )
@@ -25,6 +26,7 @@ require (
 	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -38,6 +40,7 @@ require (
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
 )

@@ -3,7 +3,11 @@
 /dist/
 /termcp-harness
 /termcp-harness.exe
-/desktop/build/
+/desktop/build/*
+!/desktop/build/appicon.png
+!/desktop/build/windows/
+/desktop/build/windows/*
+!/desktop/build/windows/icon.ico
 /desktop/frontend/node_modules/
 /desktop/frontend/package.json.md5
 /desktop/frontend/wailsjs/

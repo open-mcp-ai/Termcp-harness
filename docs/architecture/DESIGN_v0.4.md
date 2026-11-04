@@ -98,7 +98,7 @@ Terminal Workspace 不是：
 - 唯一控制入口。
 - 完整 SSH 管理器的自动复制品。
 
-当前已建立 Wails + React/TypeScript Desktop Shell，可读取 Runtime、Agent Session、审批、Core 身份、MCP 注册和事件窗口，并可在 token 仅驻留 Go 内存时提交审批决定；终端流和安装包尚未接入。Core 面板展示 external/managed/unverified 所有权、PID、启动时间和实例键，详见 `docs/contracts/harness/v0.1/core-instance.md` 与 `docs/contracts/harness/v0.1/desktop-shell.md`。
+当前已建立 Wails + React/TypeScript Desktop Shell，可读取 Runtime、Agent Session、审批、Core 身份、MCP 注册和事件窗口，并可在 token 仅驻留 Go 内存时提交审批决定；终端流已接入，安装包与 Core 补丁分发尚未完成。Desktop 默认在 Wails 单实例检查后的 `OnStartup` 中内嵌启动 Harness Runtime，Runtime 再启动可执行文件旁固定 bundle 的 Core；用户关闭窗口时选择继续最小化或确认退出，只有确认退出才按所有权停止 Runtime/Core。`--runtime` 保留为外部 Headless Runtime 模式。Core 仍是独立子进程，Harness 不 import Core 内部包。Core 面板展示 external/managed/unverified 所有权、PID、启动时间和实例键，详见 `docs/contracts/harness/v0.1/core-instance.md` 与 `docs/contracts/harness/v0.1/desktop-shell.md`。
 
 Harness 当前通过 `/api/version` 和 `/api/daemon` 识别 Core，以端点、PID、启动时间和版本生成实例键。端点可达不等于取得进程所有权；受管绑定必须与 Harness 启动时记录的 PID 和启动时间匹配。端口、PID 或版本中的单项都不能作为长期身份。
 
@@ -368,7 +368,7 @@ Terminal Workspace 的初版界面方向采用 `docs/adr/ADR-013-harness-canvas-
 - Activity 统一入口并保留实时事件、历史记录和诊断视图。
 - 面板、模块和任务生命周期必须分开。
 
-该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；面板标签合并与边缘分栏已验证，相关面板已支持跟随/锁定 Session、显式关联未知、关闭视图提示和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。Workspace Recipe v1 支持当前 Workspace 的导出、校验预览和确认替换；导入只接受已知模块与字段，隔离损坏面板、清理无效上下文、拒绝重叠布局，并在失败或取消时保留原布局。每个 Workspace 另有最多 20 步的布局/Session 引用撤销与重做历史，通过独立 versioned localStorage 持久化，支持按钮与快捷键，重启后仍可撤销；文本输入框保留原生撤销。跨 Workspace 复制复用 Recipe 字段白名单，只复制布局与 Session 引用，预览目标覆盖范围后切换目标视图，并把目标原布局写入目标自己的撤销历史。固定 Wails Go Terminal 桥已接入真实 Core：xterm、历史、WebSocket 输出、人工输入、resize 和 `shell_activity` 已实现；Harness 已接入 Core 本地开发分支的 `watch_ready`/绝对字节区间并按缺口 fail-closed，正式 Core 发布复验、重连和第三方模块贡献仍未完成。
+该布局目前是 **Accepted / Canvas 初版 PoC 已实现**；面板标签合并与边缘分栏已验证，相关面板已支持跟随/锁定 Session、显式关联未知、关闭视图提示和服务端审批回执，Canvas 状态使用 schema v2 并兼容旧布局。Workspace Recipe v1 支持当前 Workspace 的导出、校验预览和确认替换；导入只接受已知模块与字段，隔离损坏面板、清理无效上下文、拒绝重叠布局，并在失败或取消时保留原布局。每个 Workspace 另有最多 20 步的布局/Session 引用撤销与重做历史，通过独立 versioned localStorage 持久化，支持按钮与快捷键，重启后仍可撤销；文本输入框保留原生撤销。跨 Workspace 复制复用 Recipe 字段白名单，只复制布局与 Session 引用，预览目标覆盖范围后切换目标视图，并把目标原布局写入目标自己的撤销历史。固定 Wails Go Terminal 桥已接入真实 Core：xterm、历史、WebSocket 输出、人工输入、resize 和 `shell_activity` 已实现；Harness 已接入 Core 本地开发分支的 `watch_ready`/绝对字节区间并按缺口 fail-closed，自动重连与精确缺口恢复已通过可断线 WebSocket 测试；正式 Core 发布复验、长时间重连压力测试和第三方模块贡献仍未完成。
 
 ### 9.1 共享执行现场
 
@@ -381,7 +381,7 @@ Terminal Workspace 的目标不是“把 Agent 日志放在终端旁边”，而
 
 ### 9.2 终端传输路径
 
-当前 PoC 采用固定 Desktop 桥直连回环 Core，详细决策见 `docs/adr/ADR-014-core-terminal-transport.md`。仍需窗口级性能数据决定是否转为正式 Accepted：
+当前 PoC 采用固定 Desktop 桥直连回环 Core，详细决策见 `docs/adr/ADR-014-core-terminal-transport.md`。回环 Desktop 范围已 Accepted，并已记录窗口级性能、双 Shell 隔离、Windows/Kali VM、自动重连和 Core Bearer 认证基线；远程部署、凭据轮换和长时间重连压力测试仍待生产化验证：
 
 - Terminal Workspace 直接连接 Core 的终端 WebSocket，Harness 只观察控制事件。
 - Terminal Workspace 通过 Harness 转发终端字节和控制事件。
