@@ -23,6 +23,7 @@ docs/
 │   └── UX-OPTIMIZATION-BACKLOG.md
 ├── development/
 │   ├── BRANCHING.md
+│   ├── MAIN-PROTECTION.md
 │   ├── CORE-RELEASE-TRAIN.md
 │   └── MCP-MANAGEMENT-v0.2.0.md
 ├── contracts/
@@ -81,8 +82,9 @@ docs/
 9. `docs/ux/UX-OPTIMIZATION-BACKLOG.md`（Deferred 界面优化候选；不进入当前里程碑）
 10. 相关 ADR
 11. `docs/development/BRANCHING.md`
-12. `docs/development/MCP-MANAGEMENT-v0.2.0.md`（`v0.1.10` 之后的管理写入计划）
-13. `docs/development/CORE-RELEASE-TRAIN.md`（Harness 与 Core 的版本锁定、打包和兼容策略）
+12. `docs/development/MAIN-PROTECTION.md`
+13. `docs/development/MCP-MANAGEMENT-v0.2.0.md`（`v0.1.10` 之后的管理写入计划）
+14. `docs/development/CORE-RELEASE-TRAIN.md`（Harness 与 Core 的版本锁定、打包和兼容策略）
 14. `docs/contracts/README.md`
 15. `docs/contracts/harness/v0.1/control-api.md`（当前本地控制 API 草案）
 16. `docs/contracts/harness/v0.1/state-machines.md`（工具调用与审批状态语义）
